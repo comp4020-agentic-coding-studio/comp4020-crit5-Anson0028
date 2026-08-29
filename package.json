@@ -10,12 +10,17 @@
     "typecheck": "tsc --noEmit",
     "check": "pnpm typecheck && pnpm build && vitest run",
     "check:evidence": "node scripts/check-evidence.ts",
-    "test": "vitest run"
+    "check:a11y": "pnpm build && node scripts/check-a11y.ts",
+    "check:payload": "pnpm build && node scripts/check-payload.ts",
+    "test": "vitest run",
+    "check:viewports": "pnpm build && node scripts/check-viewports.ts"
   },
   "devDependencies": {
     "@types/jsdom": "^27.0.0",
     "@types/node": "^24.0.0",
+    "axe-core": "^4.10.0",
     "jsdom": "^29.1.1",
+    "playwright": "^1.48.0",
     "typescript": "^6.0.3",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"
