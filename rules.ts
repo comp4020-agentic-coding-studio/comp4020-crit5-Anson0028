@@ -413,7 +413,14 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
   // XP has to be walked into. That is what keeps the only verb honest: the
   // orbs land where the fighting was, so getting stronger means going back
   // into it.
+  // Experience comes to you, from further out than you can reach. Walking
+  // past it was the whole problem: a live run killed thirty-one things in
+  // forty-five seconds and reached level three, because collecting required
+  // steering onto a three-pixel dot rather than going roughly where the
+  // fighting was. Inside the reach an orb snaps in; out to two and a half
+  // times it, it drifts, faster the closer it is.
   const pull = magnetRadius(b);
+  const notice = pull * 2.6;
   run.orbs = run.orbs.filter((o) => {
     o.life -= dt;
     const d = dist(o, run.player);
@@ -421,6 +428,10 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
       const k = Math.min(1, (dt * 2.2) / Math.max(d, 0.001));
       o.x += (run.player.x - o.x) * k;
       o.y += (run.player.y - o.y) * k;
+    } else if (d < notice) {
+      const speed = 0.42 * (1 - (d - pull) / (notice - pull));
+      o.x += ((run.player.x - o.x) / d) * speed * dt;
+      o.y += ((run.player.y - o.y) / d) * speed * dt;
     }
     if (dist(o, run.player) < 0.022) {
       run.xp += o.value * xpPerOrb(b);
@@ -428,6 +439,11 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
     }
     return o.life > 0;
   });
+
+  // The cap applies to everything on the field, not just what spawned on its
+  // own: kill drops ignored it and the arena went back to being carpeted.
+  // Oldest first, so what you just earned is never what disappears.
+  if (run.orbs.length > MAX_ORBS) run.orbs.splice(0, run.orbs.length - MAX_ORBS);
 
   while (run.xp >= xpForLevel(run.level)) {
     run.xp -= xpForLevel(run.level);
