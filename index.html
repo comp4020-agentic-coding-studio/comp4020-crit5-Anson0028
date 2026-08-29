@@ -3,17 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>COMP4020 prototype</title>
+    <title>Close Quarters</title>
     <meta
       name="description"
-      content="Replace this with one sentence saying what this page is. A search result and a link preview both show it."
+      content="A two-minute survival run where the only thing you ever do is decide where to stand: what kills for you circles your own body, and what makes you stronger drops where the fighting was."
     />
 
-    <!--
-      The link-preview card: public/card.png, 1200x630 --- replace it. The URL
-      resolves against this page, like any link. No og:title/og:description:
-      scrapers fall back to the <title> and description above.
-    -->
+    <!-- The link-preview card: public/card.png, 1200x630. Generated from a
+         live run, so it shows the game rather than a logo. -->
     <meta property="og:type" content="website" />
     <meta property="og:image" content="./card.png" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -21,17 +18,31 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <header>
-      <nav aria-label="Primary">
-        <a href="./">Home</a>
-      </nav>
-    </header>
+    <nav aria-label="Primary">
+      <a class="skip-link" href="#arena">Skip to the game</a>
+    </nav>
     <main>
-      <h1>COMP4020 prototype</h1>
-      <p>
-        Replace this with your prototype. This week's brief is on the course website;
-        <code>spec/README.md</code> explains how the checks in this repo relate to it.
-      </p>
+      <!-- A name, and nothing else. No lede, no hint, no controls list: the
+           brief bans instructions anywhere, and the opening state teaches
+           instead — one orb a short walk away, and nothing moving until it is
+           taken.
+
+           The canvas is here in the markup rather than created at runtime.
+           The first version built it in JS and the check that says "there is
+           something to play" passed on an empty page, because the built HTML
+           it reads had no canvas in it. It is also what a screen reader finds
+           before any script runs. -->
+      <h1>Close Quarters</h1>
+      <div id="arena">
+        <canvas
+          data-testid="play"
+          role="application"
+          tabindex="0"
+          aria-label="A survival arena. Move with the arrow keys, WASD, or by dragging. Shards circle you and destroy what touches them; walk over what they leave behind to grow stronger. Survive two minutes."
+        ></canvas>
+        <div class="cards" data-testid="cards" hidden></div>
+        <div data-testid="game-state" data-moves="0" hidden></div>
+      </div>
     </main>
     <script type="module" src="./main.ts"></script>
   </body>
