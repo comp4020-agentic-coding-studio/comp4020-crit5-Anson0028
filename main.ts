@@ -336,6 +336,12 @@ if (mount) {
     mirror.dataset.outcome = run.outcome;
     mirror.dataset.level = String(run.level);
     mirror.dataset.hearts = String(run.hearts);
+    mirror.dataset.started = String(started);
+    mirror.dataset.elapsed = run.elapsedMs.toFixed(0);
+    mirror.dataset.kills = String(run.kills);
+    mirror.dataset.xp = run.xp.toFixed(1);
+    mirror.dataset.enemies = String(run.enemies.length);
+    mirror.dataset.orbs = String(run.orbs.length);
     draw(now);
     requestAnimationFrame(frame);
   }

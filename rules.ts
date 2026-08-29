@@ -64,8 +64,15 @@ const CONTACT_RADIUS = 0.030;
 const INVULNERABLE_S = 1.2;
 const ORB_LIFE_S = 8;
 const ORBIT_RADIUS = 0.10;
-const ORBIT_RATE = 2.6; // turns per second
-const ORBIT_HIT = 0.045;
+const ORBIT_RATE = 2.0; // turns per second
+// A wide shard, not a point. At 0.045 and 2.6 turns a second the swept
+// window was about a fifth of a turn, so an enemy walking through the ring
+// was hit about one time in five — and a standing player killed nothing at
+// all. In the headless runs the player is always moving, which sweeps the
+// shard across enemies and hid it completely; it took standing still in the
+// live game for six seconds with nothing dying to see it. A stranger's first
+// key press has to make something happen.
+const ORBIT_HIT = 0.062;
 // Damage per hit, with a cooldown per enemy rather than damage per second of
 // contact. Contact-time damage measured out as three dead upgrades: spinning
 // faster swept each enemy more often but for proportionally less time, so the
@@ -174,7 +181,11 @@ function spawnPressure(elapsedMs: number): { interval: number; health: number; s
   return {
     interval: 1.7 - 1.35 * t,
     health: 3 + 34 * t,
-    speed: 0.09 + 0.13 * t,
+    // Fast enough by the end to catch a player who has not levelled their
+    // legs: 0.29 against a base 0.26. When they topped out under the player's
+    // own speed, the movement card measured at nothing, because there was
+    // never anything to outrun.
+    speed: 0.12 + 0.17 * t,
     count: 1 + Math.floor(t * 4),
   };
 }
