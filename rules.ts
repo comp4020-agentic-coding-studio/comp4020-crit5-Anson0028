@@ -7,7 +7,7 @@
 // Everything is in normalised arena coordinates, 0 to 1 on both axes.
 
 export type Vec2 = { x: number; y: number };
-export type Enemy = Vec2 & { health: number; speed: number; hitCd: number };
+export type Enemy = Vec2 & { health: number; speed: number; hitCd: number; counted?: boolean };
 export type Orb = Vec2 & { life: number };
 export type Shot = Vec2 & { dx: number; dy: number; life: number };
 export type Input = { x: number; y: number };
@@ -52,16 +52,17 @@ export type Run = {
   xp: number;
   level: number;
   pending: UpgradeId[] | null;
+  kills: number;
   elapsedMs: number;
   outcome: "playing" | "won" | "lost";
   orbitPhase: number;
   cooldowns: { bolt: number; nova: number; spawn: number };
 };
 
-const PLAYER_SPEED = 0.30; // arena-fractions per second, before upgrades
+const PLAYER_SPEED = 0.26; // arena-fractions per second, before upgrades
 const CONTACT_RADIUS = 0.030;
 const INVULNERABLE_S = 1.2;
-const ORB_LIFE_S = 4.5;
+const ORB_LIFE_S = 8;
 const ORBIT_RADIUS = 0.10;
 const ORBIT_RATE = 2.6; // turns per second
 const ORBIT_HIT = 0.045;
@@ -99,6 +100,7 @@ export function createRun(): Run {
     xp: 0,
     level: 1,
     pending: null,
+    kills: 0,
     elapsedMs: 0,
     outcome: "playing",
     orbitPhase: 0,
@@ -114,10 +116,20 @@ export function createRun(): Run {
 // a run goes on; multipliers keep the fifth level of a thing worth as much as
 // the first, which is what makes a five-deep pool worth having.
 
-export const moveSpeed = (b: Build) => PLAYER_SPEED * (1 + 0.22 * b.speed);
+export const moveSpeed = (b: Build) => PLAYER_SPEED * (1 + 0.30 * b.speed);
 export const damageMul = (b: Build) => 1 + 0.30 * b.damage;
 export const rateMul = (b: Build) => 1 + 0.32 * b.rate;
-export const magnetRadius = (b: Build) => 0.030 * (1 + 1.2 * b.magnet);
+export const magnetRadius = (b: Build) => 0.055 * (1 + 1.0 * b.magnet);
+
+/**
+ * What one orb is worth. Radius alone made this upgrade a trap: measured at
+ * -1.4 seconds against taking nothing, because a pickup reach generous enough
+ * for a human to enjoy is already generous enough that more of it buys
+ * nothing. Reach and value together is what "faster experience" has to mean
+ * here, and it is the difference between a card that reads as a choice and a
+ * card that punishes whoever picks it.
+ */
+export const xpPerOrb = (b: Build) => 1 + 0.4 * b.magnet;
 
 /** How much XP a level costs. Rises, so the last upgrade is earned. */
 export const xpForLevel = (level: number) => 3 + level * 2;
@@ -160,10 +172,10 @@ function dist(a: Vec2, b: Vec2): number {
 function spawnPressure(elapsedMs: number): { interval: number; health: number; speed: number; count: number } {
   const t = elapsedMs / RUN_MS;
   return {
-    interval: 1.9 - 1.35 * t,
-    health: 3 + 27 * t,
-    speed: 0.09 + 0.10 * t,
-    count: 1 + Math.floor(t * 3),
+    interval: 1.7 - 1.35 * t,
+    health: 3 + 34 * t,
+    speed: 0.09 + 0.13 * t,
+    count: 1 + Math.floor(t * 4),
   };
 }
 
@@ -181,7 +193,11 @@ function spawnEnemy(run: Run, rng: () => number, p: ReturnType<typeof spawnPress
 
 function hurt(run: Run, enemy: Enemy, amount: number): void {
   enemy.health -= amount;
-  if (enemy.health <= 0) run.orbs.push({ x: enemy.x, y: enemy.y, life: ORB_LIFE_S });
+  if (enemy.health <= 0 && !enemy.counted) {
+    enemy.counted = true;
+    run.kills++;
+    run.orbs.push({ x: enemy.x, y: enemy.y, life: ORB_LIFE_S });
+  }
 }
 
 export function step(run: Run, dt: number, input: Input, rng: () => number): void {
@@ -300,7 +316,7 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
       o.y += (run.player.y - o.y) * k;
     }
     if (dist(o, run.player) < 0.022) {
-      run.xp++;
+      run.xp += xpPerOrb(b);
       return false;
     }
     return o.life > 0;
@@ -374,16 +390,48 @@ export const chaseXpPolicy: Policy = (run) => {
 };
 
 /**
+ * Wrap a policy in a person. It re-decides every reaction period rather than
+ * every frame, holds the last direction in between, and aims a little wrong.
+ *
+ * Without this the simulated player has zero reaction time and perfect aim,
+ * and the measurements said so: it won fifteen runs out of fifteen with every
+ * build, including builds that were doing nothing, so the pool comparison
+ * saturated at the ceiling and could not tell a good card from a dead one.
+ * A test that cannot distinguish its subjects is not a test. It also made the
+ * game look far easier than it is — playing it by hand, I was down to one
+ * heart in twelve seconds while the bot was reaching level fourteen.
+ */
+export function withReaction(base: Policy, rng: () => number, reactionMs = 150): Policy {
+  let held: Input = { x: 0, y: 0 };
+  let nextAt = 0;
+  return (run) => {
+    if (run.elapsedMs >= nextAt) {
+      nextAt = run.elapsedMs + reactionMs * (0.6 + rng() * 0.8);
+      const d = base(run);
+      const m = Math.hypot(d.x, d.y);
+      const a = Math.atan2(d.y, d.x) + (rng() - 0.5) * 0.3;
+      held = { x: Math.cos(a) * m, y: Math.sin(a) * m };
+    }
+    return held;
+  };
+}
+
+/**
  * A whole run, as fast as the CPU can do it.
  *
  * `take` decides what the simulated player does with a level-up: "first" is an
  * ordinary player taking whatever is on the left, "none" declines every card,
- * and an id takes that upgrade whenever it is offered and declines otherwise.
- * "none" is what makes the pool measurable — the first version of this had no
- * way to decline, so its "taking nothing" baseline was really "taking three
- * random cards", and it reported that levelling speed was worse than not
- * levelling at all. The comparison was against a stronger player, not a
- * weaker one.
+ * and an id leans on that upgrade — takes it whenever it is offered, and takes
+ * the leftmost otherwise.
+ *
+ * Two versions of this were wrong before it was right. The first had no way to
+ * decline at all, so its "taking nothing" baseline was really "taking three
+ * random cards" and it reported levelling speed as worse than not levelling.
+ * The second made an id mean "take this and decline everything else", which is
+ * a fair question for a weapon and a rigged one for an upgrade whose whole
+ * value is getting you to the next upgrade sooner: it measured the experience
+ * card at 1.5 seconds worse than never levelling, because it spent every level
+ * of the run on getting to levels it then wasted.
  */
 export function runHeadless(
   policy: Policy,
@@ -396,8 +444,7 @@ export function runHeadless(
     if (run.pending) {
       if (take === "none") run.pending = null;
       else if (take === "first") applyUpgrade(run, run.pending[0]);
-      else if (run.pending.includes(take)) applyUpgrade(run, take);
-      else run.pending = null;
+      else applyUpgrade(run, run.pending.includes(take) ? take : run.pending[0]);
       continue;
     }
     step(run, dt, policy(run), rng);

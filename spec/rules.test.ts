@@ -17,6 +17,7 @@ import {
   runHeadless,
   chaseXpPolicy,
   fleePolicy,
+  withReaction,
 } from "../rules";
 
 const seeded = (n: number) => {
@@ -138,7 +139,11 @@ describe("spec: no upgrade in the pool is a trap", () => {
 function runsTaking(take: Parameters<typeof runHeadless>[2], trials: number): number[] {
   const out: number[] = [];
   for (let seed = 1; seed <= trials; seed++) {
-    out.push(runHeadless(chaseXpPolicy, seeded(seed * 97), take).ms);
+    const rng = seeded(seed * 97);
+    // Through a person, not a machine. With zero reaction time and perfect
+    // aim every build won every run and this comparison saturated at the
+    // ceiling — a test that cannot tell its subjects apart.
+    out.push(runHeadless(withReaction(chaseXpPolicy, rng), rng, take).ms);
   }
   return out;
 }
