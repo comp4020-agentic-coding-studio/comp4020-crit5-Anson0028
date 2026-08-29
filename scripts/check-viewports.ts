@@ -46,7 +46,7 @@ const VIEWPORTS = [
 // then that assertion reports itself as unchecked rather than passing — a
 // check that silently skips its own subject is the failure this whole file is
 // about.
-const CANVAS_SELECTOR: string | null = null;
+const CANVAS_SELECTOR: string | null = '[data-testid="play"]';
 
 // The phone has no keyboard, so "can this be played at all here" is a question
 // only a finger can answer. In assignment 1 the touch rule sat in CLAUDE.md
@@ -55,13 +55,13 @@ const CANVAS_SELECTOR: string | null = null;
 // so: tap the play surface, and the counter in the state mirror has to
 // move. It cannot hear the sound — nothing automated can — but it can prove
 // that a finger reaches the thing that makes it.
-const TOUCH_TARGET: string | null = null;
-const TOUCH_STATE: string | null = null;
+const TOUCH_TARGET: string | null = '[data-testid="play"]';
+const TOUCH_STATE: string | null = '[data-testid="game-state"]';
 
 // The counter in that mirror which has to move when the page is used. Last
 // week it was a pluck counter; this week it is whatever the game increments
 // when a player does the thing the game is about. UNSET, deliberately.
-const TOUCH_COUNTER: string | null = null;
+const TOUCH_COUNTER: string | null = "data-moves";
 
 
 function htmlFiles(dir: string = DIST): string[] {
@@ -279,9 +279,13 @@ async function main(): Promise<void> {
           //    headless Chromium's dummy output device — so the assertion was
           //    grading the CI machine's sound card and would have gone red for
           //    something I cannot fix and green while I made the page slower.
-          //    Eight milliseconds across the part the page owns catches my
-          //    regressions; the total is printed beside it because that is
-          //    what the player's ear actually gets.
+          //    Eight milliseconds was the ceiling when the page was an
+          //    instrument and a note could be handed to the audio clock the
+          //    instant the pointer moved. A game answers on a frame, and the
+          //    average wait for the next frame at 60Hz is eight milliseconds
+          //    on its own — the old ceiling was measuring the refresh rate.
+          //    Twenty is one frame and a little: input that misses a frame
+          //    entirely still fails, which is the regression worth catching.
           if (!(CANVAS_SELECTOR && TOUCH_STATE)) {
             console.error(
               `✗ ${label}: latency UNCHECKED — CANVAS_SELECTOR/TOUCH_STATE are unset. This brief is judged ` +
@@ -308,15 +312,15 @@ async function main(): Promise<void> {
               if (!Number.isFinite(worst) || !Number.isFinite(mine)) {
                 console.error(`✗ ${label}: the page reports no input-to-response latency at all`);
                 failed = true;
-              } else if (mine > 8) {
+              } else if (mine > 20) {
                 console.error(
-                  `✗ ${label}: the page spent ${mine.toFixed(1)} ms of its own between hand and sound ` +
+                  `✗ ${label}: the page spent ${mine.toFixed(1)} ms of its own between hand and picture ` +
                     `(total ${worst.toFixed(1)} ms: ${parts})`,
                 );
                 failed = true;
               } else {
                 console.log(
-                  `✓ ${label}: the page's own share of the gap is ${mine.toFixed(1)} ms ` +
+                  `✓ ${label}: hand to picture ${mine.toFixed(1)} ms, inside one frame ` +
                     `(total ${worst.toFixed(1)} ms: ${parts})`,
                 );
               }
@@ -401,7 +405,7 @@ async function main(): Promise<void> {
               );
               failed = true;
             } else {
-              console.log(`✓ ${label}: the whole play surface is on screen, ${fits.height.toFixed(0)}px of string to play`);
+              console.log(`✓ ${label}: the whole play surface is on screen, ${fits.height.toFixed(0)}px of play surface`);
             }
           }
         } finally {

@@ -269,15 +269,27 @@ async function checkReducedMotion(page: Page, label: string): Promise<boolean> {
 // The page publishes whether its idle motion is running, so the claim can be
 // checked at the only place it is true.
 async function checkCanvasMotion(page: Page, label: string): Promise<boolean> {
-  const state = '[data-testid="harp-state"]';
+  const state = '[data-testid="game-state"]';
   const running = await page.locator(state).getAttribute("data-idle-motion");
   if (running !== "on") {
-    console.error(`✗ ${label}: the harp reports its idle motion as "${running}" before anyone has touched it — nothing to test`);
+    console.error(`✗ ${label}: the page reports its idle motion as "${running}" before anyone has touched it — nothing to test`);
     return true;
   }
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload({ waitUntil: "load" });
+  // The attribute is written by the first animation frame, not by load, and
+  // reading it straight after the reload got "null" about half the time —
+  // a flake that reported the page as still animating when it was not. A
+  // check that fails at random gets ignored, which is worse than not having
+  // it.
+  await page
+    .waitForFunction(
+      (sel: string) => document.querySelector<HTMLElement>(sel)?.dataset.idleMotion != null,
+      state,
+      { timeout: 4000 },
+    )
+    .catch(() => undefined);
   const underReduce = await page.locator(state).getAttribute("data-idle-motion");
   await page.emulateMedia({ reducedMotion: null });
   await page.reload({ waitUntil: "load" });
