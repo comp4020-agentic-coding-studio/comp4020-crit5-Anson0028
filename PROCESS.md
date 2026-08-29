@@ -5,10 +5,10 @@
 A two-minute survival run where the only thing you ever do is decide where to
 stand. Shards circle your own body and kill what touches them, so attacking is
 walking towards; the experience they leave drops where the fighting was, so
-getting stronger means going back into it. Every level offers three cards
-carrying an icon and five pips and not one word. There is no text anywhere: the
-opening screen is one orb a short walk away, with the clock stopped and nothing
-spawning until you take it.
+getting stronger means going back into it. Every level offers three cards — an icon, a
+name, one line, and five pips. The opening screen has no words on it at all:
+experience already lying on the field, the clock stopped, and nothing spawning
+until you pick a piece up.
 
 ## The moments that mattered
 

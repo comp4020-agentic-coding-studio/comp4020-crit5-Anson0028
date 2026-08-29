@@ -23,6 +23,11 @@ if (mount) {
   const canvas = mount.querySelector<HTMLCanvasElement>('[data-testid="play"]')!;
   const cards = mount.querySelector<HTMLElement>('[data-testid="cards"]')!;
   const mirror = mount.querySelector<HTMLElement>('[data-testid="game-state"]')!;
+  const verdict = mount.querySelector<HTMLElement>('[data-testid="verdict"]')!;
+  const hudHearts = mount.querySelector<HTMLElement>('[data-testid="hearts"]')!;
+  const hudLevel = mount.querySelector<HTMLElement>('[data-testid="level"]')!;
+  const hudClock = mount.querySelector<HTMLElement>('[data-testid="clock"]')!;
+  const hudTally = mount.querySelector<HTMLElement>('[data-testid="tally"]')!;
 
   const ctx = canvas.getContext("2d")!;
   let w = 0;
@@ -135,6 +140,21 @@ if (mount) {
   // Icons and pips. Not one word: a card that explains itself is the
   // instruction the brief bans, and three unexplained choices are taught the
   // same way everything else here is — by taking one and seeing what changes.
+  // A name and one line each. Icons alone were defensible — the brief bans
+  // instructions, and three unexplained cards are learned by taking one — but
+  // they made the only decision in the game a guess, and a guess is not a
+  // decision. These describe what a thing does, not how to play; the opening
+  // screen still has no words on it at all, which is where the rule bites.
+  const CARD: Record<UpgradeId, { name: string; line: string }> = {
+    speed: { name: "Fleet", line: "Move faster." },
+    damage: { name: "Edge", line: "Everything you have hits harder." },
+    rate: { name: "Tempo", line: "Everything you have fires more often." },
+    magnet: { name: "Draw", line: "Experience comes from further, and is worth more." },
+    orbit: { name: "Orbit", line: "A shard circles you, and cuts what it touches." },
+    bolt: { name: "Bolt", line: "One more bolt, at whatever is nearest." },
+    nova: { name: "Pulse", line: "A shockwave, outward, on its own clock." },
+  };
+
   const GLYPH: Record<UpgradeId, string> = {
     speed: '<path d="M20 34 L34 14 M14 34 L28 14" stroke="currentColor" stroke-width="3.5" fill="none" stroke-linecap="round"/>',
     damage: '<path d="M24 8 L30 24 L24 40 L18 24 Z" fill="currentColor"/>',
@@ -152,11 +172,15 @@ if (mount) {
       b.type = "button";
       b.dataset.upgrade = id;
       const have = run.build[id];
-      b.setAttribute("aria-label", `${id}, level ${have} of ${MAX_LEVEL}`);
+      b.setAttribute("aria-label", `${CARD[id].name}: ${CARD[id].line} Level ${have} of ${MAX_LEVEL}.`);
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("viewBox", "0 0 48 48");
       svg.setAttribute("aria-hidden", "true");
       svg.innerHTML = GLYPH[id];
+      const name = document.createElement("strong");
+      name.textContent = CARD[id].name;
+      const line = document.createElement("em");
+      line.textContent = CARD[id].line;
       const pips = document.createElement("span");
       pips.className = "pips";
       for (let i = 0; i < MAX_LEVEL; i++) {
@@ -165,7 +189,7 @@ if (mount) {
         else if (i === have) pip.className = "next";
         pips.append(pip);
       }
-      b.append(svg, pips);
+      b.append(svg, name, line, pips);
       b.addEventListener("click", () => {
         applyUpgrade(run, id);
         cards.hidden = true;
@@ -175,6 +199,47 @@ if (mount) {
     }
     cards.hidden = false;
     (cards.firstElementChild as HTMLElement | null)?.focus();
+  }
+
+  // --- the verdict ---------------------------------------------------------
+  function mmss(ms: number): string {
+    const s = Math.floor(ms / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+
+  function showVerdict(): void {
+    const won = run.outcome === "won";
+    verdict.className = `verdict ${won ? "won" : "lost"}`;
+    verdict.replaceChildren();
+    const title = document.createElement("h2");
+    title.textContent = won ? "Survived" : "Overrun";
+    const dl = document.createElement("dl");
+    for (const [k, v] of [
+      ["Lasted", `${mmss(run.elapsedMs)} of ${mmss(RUN_MS)}`],
+      ["Level", String(run.level)],
+      ["Destroyed", String(run.kills)],
+    ] as const) {
+      const dt = document.createElement("dt");
+      dt.textContent = k;
+      const dd = document.createElement("dd");
+      dd.textContent = v;
+      dl.append(dt, dd);
+    }
+    const again = document.createElement("button");
+    again.type = "button";
+    again.dataset.testid = "again";
+    again.textContent = "Again";
+    again.addEventListener("click", restart);
+    verdict.append(title, dl, again);
+    verdict.hidden = false;
+    again.focus();
+  }
+
+  function restart(): void {
+    run = createRun();
+    started = false;
+    verdict.hidden = true;
+    canvas.focus();
   }
 
   // --- drawing -------------------------------------------------------------
@@ -225,10 +290,6 @@ if (mount) {
       ctx.fillRect(ox, oy + 7, side, 4);
       ctx.fillStyle = "#e05c5c";
       ctx.fillRect(ox, oy + 7, side * left, 4);
-    }
-
-    for (let i = 0; i < run.hearts; i++) {
-      disc(ox + 12 + i * 14, oy + 16, 4.5, "#e05c5c");
     }
 
     for (const o of run.orbs) {
@@ -328,35 +389,13 @@ if (mount) {
       ring(px(run.player.x), py(run.player.y), ps(0.035 + pulse * 0.05), `rgb(244 241 232 / ${0.30 - pulse * 0.2})`, 2);
     }
 
+    // The end state is a panel now, in words, so the canvas only dims behind
+    // it. The wordless ring said "something happened" and left which of the
+    // two things to the player.
     if (run.outcome !== "playing") {
       ctx.fillStyle = "rgb(10 10 13 / 72%)";
       ctx.fillRect(ox, oy, side, side);
-      const won = run.outcome === "won";
-      ring(px(0.5), py(0.5), ps(0.10), won ? "#e8b25c" : "#e05c5c", 4);
-      if (won) disc(px(0.5), py(0.5), ps(0.045), "#e8b25c");
-      // The replay affordance, and the only symbol on the page: a circular
-      // arrow. Words here would be instructions, and a bare ring said nothing
-      // at all — a stranger has to be able to see that this can be done
-      // again. Any key, or a tap anywhere, starts the next run.
-      const r = ps(0.115);
-      ctx.strokeStyle = "rgb(233 230 223 / 55%)";
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(px(0.5), py(0.5), r, -Math.PI * 0.72, Math.PI * 1.16);
-      ctx.stroke();
-      const tip = -Math.PI * 0.72;
-      const tx = px(0.5) + Math.cos(tip) * r;
-      const ty = py(0.5) + Math.sin(tip) * r;
-      ctx.fillStyle = "rgb(233 230 223 / 55%)";
-      ctx.beginPath();
-      ctx.moveTo(tx + Math.cos(tip) * 9, ty + Math.sin(tip) * 9);
-      ctx.lineTo(tx - Math.sin(tip) * 9, ty + Math.cos(tip) * 9);
-      ctx.lineTo(tx + Math.sin(tip) * 9, ty - Math.cos(tip) * 9);
-      ctx.closePath();
-      ctx.fill();
-      // How far you got, left along the top: the timer bar is the score, and
-      // it is already on screen.
-      ctx.fillStyle = won ? "#e8b25c" : "#e05c5c";
+      ctx.fillStyle = run.outcome === "won" ? "#e8b25c" : "#e05c5c";
       ctx.fillRect(ox, oy, side * Math.min(1, run.elapsedMs / RUN_MS), 6);
     }
   }
@@ -388,10 +427,8 @@ if (mount) {
 
     const input = direction();
     if (run.outcome !== "playing") {
-      if (input.x !== 0 || input.y !== 0) {
-        run = createRun();
-        started = false;
-      }
+      if (verdict.hidden) showVerdict();
+      if (input.x !== 0 || input.y !== 0) restart();
     } else if (!started) {
       // Frozen until the first orb is taken: no clock, no spawns. The field
       // already has experience lying on it, so the opening screen is a room
@@ -415,6 +452,13 @@ if (mount) {
       if (run.pending && cards.hidden) showCards(run.pending);
       step(run, dt, input, rng);
     }
+
+    for (let i = 0; i < hudHearts.children.length; i++) {
+      hudHearts.children[i].className = i < run.hearts ? "" : "gone";
+    }
+    hudLevel.textContent = `LV ${run.level}`;
+    hudClock.textContent = `${mmss(run.elapsedMs)} / ${mmss(RUN_MS)}`;
+    hudTally.textContent = String(run.kills);
 
     mirror.dataset.idleMotion = reducedMotion.matches ? "off" : "on";
     mirror.dataset.outcome = run.outcome;

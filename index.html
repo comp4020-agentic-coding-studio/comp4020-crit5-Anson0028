@@ -34,6 +34,12 @@
            before any script runs. -->
       <h1>Close Quarters</h1>
       <div id="arena">
+        <div class="hud" data-testid="hud">
+          <p class="hearts" data-testid="hearts" aria-label="Lives remaining"><b></b><b></b><b></b></p>
+          <p class="lv" data-testid="level">LV 1</p>
+          <p class="clock" data-testid="clock">0:00 / 2:00</p>
+          <p class="tally" data-testid="tally">0</p>
+        </div>
         <canvas
           data-testid="play"
           role="application"
@@ -41,6 +47,7 @@
           aria-label="A survival arena. Move with the arrow keys, WASD, or by dragging. You fire at whatever is nearest on your own; walk over the experience lying on the ground to grow stronger. Survive two minutes."
         ></canvas>
         <div class="cards" data-testid="cards" hidden></div>
+        <div class="verdict" data-testid="verdict" hidden></div>
         <div data-testid="game-state" data-moves="0" hidden></div>
       </div>
     </main>

@@ -55,12 +55,25 @@ h1 {
   text-align: center;
 }
 
-/* Square, and bounded by both axes at once. The arena is square in the
-   rules — a fraction of it is the same distance in x as in y — so a letterbox
-   here would be dead space the player keeps trying to walk into. */
+/* Square, and bounded by both axes at once. The arena is square in the rules
+   — a fraction of it is the same distance in x as in y — so a letterbox here
+   would be dead space the player keeps trying to walk into.
+   The size is set on <main>, not on #arena. When #arena asked for 100% of a
+   content-sized parent, the HUD row underneath it decided the page width: its
+   1fr column collapsed to nothing and the whole game rendered 230px wide in a
+   1440px window. Whatever governs the width has to be the thing that knows
+   the window. */
+main {
+  /* No percentage in here on purpose. `100%` resolves against a grid column
+     that is itself sized by its content, so the width fed back into itself
+     and the whole game rendered 230px wide inside a 1440px window. Viewport
+     units cannot do that. */
+  inline-size: min(46rem, calc(100svh - 9rem), calc(100vw - 2rem));
+}
+
 #arena {
   position: relative;
-  inline-size: min(100%, 46rem, calc(100svh - 7rem));
+  inline-size: 100%;
 }
 
 canvas[data-testid="play"] {
@@ -138,4 +151,151 @@ canvas[data-testid="play"]:focus-visible {
 .pips i.next {
   background: var(--accent);
   box-shadow: 0 0 0 3px rgb(232 178 92 / 25%);
+}
+
+/* --- the HUD -------------------------------------------------------------
+   Above the arena rather than drawn into it: three numbers a player glances
+   at, in text they can actually read, at a size a phone can show. The bars
+   inside the canvas still carry the same two quantities continuously; this
+   says what they are. */
+.hud {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 0.4rem;
+  font-size: clamp(0.75rem, 2.6vw, 0.9rem);
+  letter-spacing: 0.08em;
+  color: var(--dim);
+}
+
+.hud p {
+  margin: 0;
+}
+
+.hearts {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.hearts b {
+  inline-size: 0.7rem;
+  block-size: 0.7rem;
+  border-radius: 50%;
+  background: #e05c5c;
+}
+
+.hearts b.gone {
+  background: rgb(224 92 92 / 22%);
+}
+
+.lv {
+  color: #9fd0ff;
+  font-variant-numeric: tabular-nums;
+}
+
+.clock {
+  color: var(--accent);
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.tally::before {
+  content: "×";
+  margin-inline-end: 0.15rem;
+  opacity: 0.6;
+}
+
+.tally {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the verdict ---------------------------------------------------------
+   A run has to end in a way nobody has to interpret. The wordless ring was
+   not enough: it said "something happened", not "you survived" or "you did
+   not". */
+.verdict {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 0.6rem;
+  padding: 1rem;
+  text-align: center;
+  background: rgb(10 10 13 / 82%);
+  border-radius: 0.5rem;
+}
+
+.verdict[hidden] {
+  display: none;
+}
+
+.verdict h2 {
+  margin: 0;
+  font-size: clamp(1.6rem, 7vw, 2.6rem);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.verdict.won h2 {
+  color: var(--accent);
+}
+
+.verdict.lost h2 {
+  color: #e05c5c;
+}
+
+.verdict dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.2rem 1.2rem;
+  margin: 0;
+  font-size: clamp(0.8rem, 3vw, 0.95rem);
+  color: var(--dim);
+}
+
+.verdict dt {
+  text-align: end;
+}
+
+.verdict dd {
+  margin: 0;
+  text-align: start;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.verdict button {
+  justify-self: center;
+  min-block-size: 44px;
+  padding: 0.5rem 1.4rem;
+  margin-block-start: 0.4rem;
+  color: inherit;
+  background: rgb(233 230 223 / 8%);
+  border: 1px solid rgb(233 230 223 / 30%);
+  border-radius: 0.5rem;
+  font: inherit;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.verdict button:hover,
+.verdict button:focus-visible {
+  background: rgb(232 178 92 / 20%);
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Names and one line each on the cards. */
+.cards button strong {
+  font-size: clamp(0.85rem, 3vw, 1rem);
+  letter-spacing: 0.06em;
+}
+
+.cards button em {
+  font-style: normal;
+  font-size: clamp(0.7rem, 2.6vw, 0.82rem);
+  line-height: 1.35;
+  color: var(--dim);
+  text-align: center;
 }
