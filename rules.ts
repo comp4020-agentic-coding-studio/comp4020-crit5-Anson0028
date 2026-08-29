@@ -7,7 +7,26 @@
 // Everything is in normalised arena coordinates, 0 to 1 on both axes.
 
 export type Vec2 = { x: number; y: number };
-export type Enemy = Vec2 & { health: number; maxHealth: number; speed: number; hitCd: number; counted?: boolean; boss?: boolean };
+export type EnemyKind = "walker" | "shooter" | "charger";
+
+export type Enemy = Vec2 & {
+  health: number;
+  maxHealth: number;
+  speed: number;
+  hitCd: number;
+  kind: EnemyKind;
+  /** Seconds until this one does its thing again — shoot, or charge. */
+  cd: number;
+  /** A charge in progress: direction, and how long is left of it. */
+  dash?: { x: number; y: number; t: number };
+  counted?: boolean;
+  boss?: boolean;
+  /** The second boss does both. */
+  charges?: boolean;
+};
+
+/** Something the enemies fired. Costs a heart, same as walking into one. */
+export type Hazard = Vec2 & { dx: number; dy: number; life: number };
 export type Orb = Vec2 & { life: number; value: number };
 export type Shot = Vec2 & { dx: number; dy: number; life: number };
 export type Input = { x: number; y: number };
@@ -48,6 +67,7 @@ export type Run = {
   enemies: Enemy[];
   orbs: Orb[];
   shots: Shot[];
+  hazards: Hazard[];
   build: Build;
   xp: number;
   level: number;
@@ -118,13 +138,23 @@ const BOLT_INTERVAL = 0.85;
 // been gathering can put a boss down inside the window, and a player who has
 // been dodging in a corner cannot, and loses there rather than slowly.
 export const BOSS_TIMES_MS = [40_000, 80_000] as const;
-export const BOSS_WINDOW_MS = 22_000;
+export const BOSS_WINDOW_MS = 26_000;
 // Sized so the opening weapon on its own cannot do it. Base damage is about
 // 20 a second and the window is 22, so anything under 440 is a boss a player
 // who declined every card can still kill — and at 200 they did, eleven runs
 // out of fifteen. The gate has to actually be a gate.
-const BOSS_HEALTH = [620, 1500] as const;
+const BOSS_HEALTH = [520, 780] as const;
 const BOSS_SPEED = [0.10, 0.13] as const;
+const HAZARD_SPEED = 0.34;
+const HAZARD_LIFE = 4.5;
+const HAZARD_RADIUS = 0.014;
+const SHOOTER_RANGE = 0.34;
+const SHOOTER_INTERVAL = 2.4;
+const CHARGE_SPEED = 0.85;
+const CHARGE_TIME = 0.42;
+const CHARGE_INTERVAL = 3.4;
+const BOSS_BURST_INTERVAL = 3.2;
+const BOSS_BURST_COUNT = 12;
 export const BOSS_RADIUS = 0.055;
 const BOSS_ORBS = 10;
 
@@ -147,6 +177,7 @@ export function createRun(rng: () => number = Math.random): Run {
     enemies: [],
     orbs: scattered,
     shots: [],
+    hazards: [],
     // One weapon from the start, and it is the one that shoots. The orbiting
     // shard opened the game for a while and it asked too much: it only kills
     // what you walk into, so a player who has not worked that out yet stands
@@ -176,7 +207,7 @@ export function createRun(rng: () => number = Math.random): Run {
 // the first, which is what makes a five-deep pool worth having.
 
 export const moveSpeed = (b: Build) => PLAYER_SPEED * (1 + 0.30 * b.speed);
-export const damageMul = (b: Build) => 1 + 0.30 * b.damage;
+export const damageMul = (b: Build) => 1 + 0.45 * b.damage;
 export const rateMul = (b: Build) => 1 + 0.32 * b.rate;
 export const magnetRadius = (b: Build) => 0.075 * (1 + 0.9 * b.magnet);
 
@@ -190,13 +221,21 @@ export const magnetRadius = (b: Build) => 0.075 * (1 + 0.9 * b.magnet);
  */
 export const xpPerOrb = (b: Build) => 1 + 0.4 * b.magnet;
 
-/** How much XP a level costs. Rises, so the last upgrade is earned — and
+/**
+ * How much XP a level costs. It used to be linear, and the first level-up
+ * landed a second or two into a run: the orbs lying around the start were
+ * enough on their own, so the card screen arrived before anything had
+ * happened. Superlinear means the early ones are still quick and the late
+ * ones have to be worked for, which is the shape this kind of game wants.
+ */
+export const xpForLevel = (level: number) => 6 + Math.round(2.2 * level ** 1.45);
+
+/** Old note kept for the record — how much XP a level costs. Rises, so the last upgrade is earned — and
  *  steeply enough that a run is not one long card screen. At 3 + 2L a
  *  two-minute run reached level 24 — a level-up every five seconds, a game
  *  about choosing rather than about moving. At 5 + 4L it reached nine and
  *  most of the pool never came out. This is fourteen, about one every eight
  *  seconds, and an ordinary player wins about two runs in five. */
-export const xpForLevel = (level: number) => 3 + level * 2;
 
 // --- levelling -------------------------------------------------------------
 
@@ -233,17 +272,27 @@ function dist(a: Vec2, b: Vec2): number {
 
 /** Enemies arrive faster and tougher as the run goes on. The player never
  *  chooses this; they only feel it. */
+/** What kinds have shown up by now. Walkers teach the game; the other two
+ *  arrive once it has been taught, so nothing new is ever the first thing a
+ *  player meets. */
+export function kindsAt(elapsedMs: number): EnemyKind[] {
+  const kinds: EnemyKind[] = ["walker"];
+  if (elapsedMs > 22_000) kinds.push("shooter");
+  if (elapsedMs > 48_000) kinds.push("charger");
+  return kinds;
+}
+
 function spawnPressure(elapsedMs: number): { interval: number; health: number; speed: number; count: number } {
   const t = elapsedMs / RUN_MS;
   return {
-    interval: 1.9 - 1.35 * t,
-    health: 3 + 26 * t,
+    interval: 1.9 - 1.1 * t,
+    health: 3 + 20 * t,
     // Fast enough by the end to catch a player who has not levelled their
     // legs: 0.29 against a base 0.26. When they topped out under the player's
     // own speed, the movement card measured at nothing, because there was
     // never anything to outrun.
     speed: 0.12 + 0.17 * t,
-    count: 1 + Math.floor(t * 4),
+    count: 1 + Math.floor(t * 2.5),
   };
 }
 
@@ -256,7 +305,17 @@ function spawnEnemy(run: Run, rng: () => number, p: ReturnType<typeof spawnPress
     : edge === 1 ? { x: along, y: 1.03 }
     : edge === 2 ? { x: -0.03, y: along }
     : { x: 1.03, y: along };
-  run.enemies.push({ ...at, health: p.health, maxHealth: p.health, speed: p.speed, hitCd: 0 });
+  const kinds = kindsAt(run.elapsedMs);
+  const kind = kinds[Math.floor(rng() * kinds.length)];
+  run.enemies.push({
+    ...at,
+    health: p.health * (kind === "walker" ? 1 : 0.75),
+    maxHealth: p.health,
+    speed: p.speed * (kind === "charger" ? 0.5 : kind === "shooter" ? 0.8 : 1),
+    hitCd: 0,
+    kind,
+    cd: kind === "shooter" ? SHOOTER_INTERVAL * rng() : CHARGE_INTERVAL * rng(),
+  });
 }
 
 function hurt(run: Run, enemy: Enemy, amount: number): void {
@@ -307,7 +366,20 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
       : edge === 1 ? { x: along, y: 1.05 }
       : edge === 2 ? { x: -0.05, y: along }
       : { x: 1.05, y: along };
-    run.enemies.push({ ...at, health: BOSS_HEALTH[i], maxHealth: BOSS_HEALTH[i], speed: BOSS_SPEED[i], hitCd: 0, boss: true });
+    run.enemies.push({
+      ...at,
+      health: BOSS_HEALTH[i],
+      maxHealth: BOSS_HEALTH[i],
+      speed: BOSS_SPEED[i],
+      hitCd: 0,
+      kind: "walker",
+      cd: 1.5,
+      boss: true,
+      // The first one throws a ring of shot. The second one does that and
+      // charges as well, because a second boss that is only a bigger first
+      // boss is a bar chart, not an encounter.
+      charges: i > 0,
+    });
     run.bossDeadline = run.elapsedMs + BOSS_WINDOW_MS;
   }
   const bossAlive = run.enemies.some((e) => e.boss);
@@ -330,10 +402,69 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
 
   for (const e of run.enemies) {
     e.hitCd -= dt;
+    e.cd -= dt;
     const d = dist(e, run.player) || 1;
-    e.x += ((run.player.x - e.x) / d) * e.speed * dt;
-    e.y += ((run.player.y - e.y) / d) * e.speed * dt;
+    const toward = { x: (run.player.x - e.x) / d, y: (run.player.y - e.y) / d };
+
+    if (e.dash && e.dash.t > 0) {
+      // Committed. A charge that steers is just a fast walker; the whole
+      // point is that it goes where you were, so stepping aside works.
+      e.dash.t -= dt;
+      e.x = clamp01(e.x + e.dash.x * CHARGE_SPEED * dt);
+      e.y = clamp01(e.y + e.dash.y * CHARGE_SPEED * dt);
+      continue;
+    }
+
+    if (e.boss) {
+      e.x += toward.x * e.speed * dt;
+      e.y += toward.y * e.speed * dt;
+      if (e.cd <= 0) {
+        e.cd = BOSS_BURST_INTERVAL;
+        if (e.charges && rng() < 0.5) e.dash = { ...toward, t: CHARGE_TIME * 1.4 };
+        else {
+          const off = rng() * Math.PI * 2;
+          for (let i = 0; i < BOSS_BURST_COUNT; i++) {
+            const a = off + (i / BOSS_BURST_COUNT) * Math.PI * 2;
+            run.hazards.push({ x: e.x, y: e.y, dx: Math.cos(a), dy: Math.sin(a), life: HAZARD_LIFE });
+          }
+        }
+      }
+      continue;
+    }
+
+    if (e.kind === "shooter") {
+      // Keeps its distance and makes you come to it, or go round it.
+      const want = d > SHOOTER_RANGE ? 1 : d < SHOOTER_RANGE * 0.7 ? -1 : 0;
+      e.x += toward.x * e.speed * want * dt;
+      e.y += toward.y * e.speed * want * dt;
+      if (e.cd <= 0) {
+        e.cd = SHOOTER_INTERVAL;
+        run.hazards.push({ x: e.x, y: e.y, dx: toward.x, dy: toward.y, life: HAZARD_LIFE });
+      }
+      continue;
+    }
+
+    if (e.kind === "charger") {
+      if (e.cd <= 0 && d < 0.55) {
+        e.cd = CHARGE_INTERVAL;
+        e.dash = { ...toward, t: CHARGE_TIME };
+        continue;
+      }
+      e.x += toward.x * e.speed * dt;
+      e.y += toward.y * e.speed * dt;
+      continue;
+    }
+
+    e.x += toward.x * e.speed * dt;
+    e.y += toward.y * e.speed * dt;
   }
+
+  for (const h of run.hazards) {
+    h.x += h.dx * HAZARD_SPEED * dt;
+    h.y += h.dy * HAZARD_SPEED * dt;
+    h.life -= dt;
+  }
+  run.hazards = run.hazards.filter((h) => h.life > 0 && h.x > -0.08 && h.x < 1.08 && h.y > -0.08 && h.y < 1.08);
 
   // Weapons. None of them is aimed: the player's only control is standing
   // somewhere, so every weapon fires off its own clock and hits whatever the
@@ -401,12 +532,12 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
   // Contact. One heart per immunity window however many are touching:
   // otherwise three frames of overlap take three hearts in fifty milliseconds.
   if (run.invulnerableFor <= 0) {
-    for (const e of run.enemies) {
-      if (dist(e, run.player) < CONTACT_RADIUS + (e.boss ? BOSS_RADIUS : 0)) {
-        run.hearts--;
-        run.invulnerableFor = INVULNERABLE_S;
-        break;
-      }
+    const touched =
+      run.enemies.some((e) => dist(e, run.player) < CONTACT_RADIUS + (e.boss ? BOSS_RADIUS : 0)) ||
+      run.hazards.some((h) => dist(h, run.player) < CONTACT_RADIUS + HAZARD_RADIUS);
+    if (touched) {
+      run.hearts--;
+      run.invulnerableFor = INVULNERABLE_S;
     }
   }
 
@@ -471,7 +602,8 @@ export const fleePolicy: Policy = (run) => {
   const toCentre = { x: 0.5 - run.player.x, y: 0.5 - run.player.y };
   const edge = Math.max(Math.abs(run.player.x - 0.5), Math.abs(run.player.y - 0.5));
   const w = edge > 0.36 ? 2.2 : 0;
-  return { x: away.x + toCentre.x * w, y: away.y + toCentre.y * w };
+  const dodge = hazardPush(run);
+  return { x: away.x + toCentre.x * w + dodge.x, y: away.y + toCentre.y * w + dodge.y };
 };
 
 /**
@@ -485,9 +617,32 @@ export const fleePolicy: Policy = (run) => {
  * enough to touch, and away from the walls, which are where you die when you
  * back into one.
  */
+/**
+ * Step out of the way of anything in flight. Added when the shooters were:
+ * both policies avoided enemies and walked straight through their shot, so
+ * every measurement after that change was of a player who does not dodge, and
+ * the game read as impossible when it was only new.
+ */
+function hazardPush(run: Run): Input {
+  let x = 0;
+  let y = 0;
+  for (const h of run.hazards) {
+    const d = dist(h, run.player);
+    if (d < 0.13) {
+      const w = (0.13 - d) / 0.13;
+      x -= ((h.x - run.player.x) / (d || 1)) * w * 6.0;
+      y -= ((h.y - run.player.y) / (d || 1)) * w * 6.0;
+    }
+  }
+  return { x, y };
+}
+
 export const chaseXpPolicy: Policy = (run) => {
   let x = 0;
   let y = 0;
+  const dodge = hazardPush(run);
+  x += dodge.x;
+  y += dodge.y;
   if (run.orbs.length > 0) {
     const o = run.orbs.reduce((a, c) => (dist(c, run.player) < dist(a, run.player) ? c : a), run.orbs[0]);
     const d = dist(o, run.player) || 1;

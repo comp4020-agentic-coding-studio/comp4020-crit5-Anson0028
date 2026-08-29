@@ -18,6 +18,7 @@ import {
   chaseXpPolicy,
   fleePolicy,
   withReaction,
+  kindsAt,
   BOSS_TIMES_MS,
   BOSS_WINDOW_MS,
 } from "../rules";
@@ -76,7 +77,7 @@ describe("spec: a wrong move is possible", () => {
     // about where you stand and not about how fast you kill. At ten health the
     // opening bolt destroyed it before it could touch anybody and the
     // assertion failed for the wrong reason.
-    run.enemies = [{ x: 0.5, y: 0.42, health: 5000, maxHealth: 5000, speed: 0, hitCd: 99 }];
+    run.enemies = [{ x: 0.5, y: 0.42, health: 5000, maxHealth: 5000, speed: 0, hitCd: 99, kind: "walker" as const, cd: 999 }];
     run.player = { x: 0.5, y: 0.5 };
     const into = structuredClone(run);
     const away = structuredClone(run);
@@ -91,10 +92,18 @@ describe("spec: a wrong move is possible", () => {
 });
 
 describe("spec: play ends somewhere", () => {
-  it("can be won by going and getting the experience", () => {
-    const { outcome, ms } = runHeadless(chaseXpPolicy, seeded(5));
-    expect(outcome).toBe("won");
-    expect(ms).toBeGreaterThanOrEqual(RUN_MS);
+  it("can be won", () => {
+    // A win is rare enough now that it needs looking for across seeds rather
+    // than being asserted on one. It has to exist — a game with no reachable
+    // ending fails the brief outright — but a two-minute run with two bosses
+    // in it is not something an average run reaches, and pretending otherwise
+    // by picking a friendly seed would be dressing the number up.
+    const wins = Array.from({ length: 15 }, (_, i) => {
+      const rng = seeded((i + 1) * 97);
+      return runHeadless(withReaction(chaseXpPolicy, rng), rng, "first");
+    }).filter((r) => r.outcome === "won");
+    expect(wins.length).toBeGreaterThan(0);
+    expect(wins[0].ms).toBeGreaterThanOrEqual(RUN_MS);
   });
 
   it("cannot be won by declining every card, however well you dodge", () => {
@@ -174,11 +183,63 @@ describe("the boss is where not gathering gets asked about", () => {
   it("is passable by a player who did", () => {
     const wall = BOSS_TIMES_MS[0] + BOSS_WINDOW_MS;
     let past = 0;
-    for (let seed = 1; seed <= 9; seed++) {
+    for (let seed = 1; seed <= 15; seed++) {
       const rng = seeded(seed * 97);
-      if (runHeadless(withReaction(fleePolicy, rng), rng, "first").ms > wall) past++;
+      if (runHeadless(withReaction(chaseXpPolicy, rng), rng, "first").ms > wall) past++;
     }
-    expect(past).toBeGreaterThan(4);
+    expect(past).toBeGreaterThan(7);
+  });
+});
+
+describe("the three kinds, and when they turn up", () => {
+  it("opens with only the kind that teaches the game", () => {
+    // Nothing new is ever the first thing a player meets. Walkers say "this
+    // comes at you"; a shooter or a charger on the opening screen would be
+    // teaching two things at once with no words to do it in.
+    expect(kindsAt(0)).toEqual(["walker"]);
+    expect(kindsAt(30_000)).toContain("shooter");
+    expect(kindsAt(30_000)).not.toContain("charger");
+    expect(kindsAt(60_000)).toEqual(["walker", "shooter", "charger"]);
+  });
+
+  it("actually produces all three, and things they fire", () => {
+    const rng = seeded(21);
+    const run = createRun(rng);
+    const seen = new Set<string>();
+    let hazards = 0;
+    while (run.elapsedMs < 70_000 && run.outcome === "playing") {
+      if (run.pending) run.pending = null;
+      // Kept alive on purpose. The question is what the game produces over
+      // seventy seconds, and a run that dies at forty answers a different
+      // one — the first version of this failed because the chargers arrive
+      // after the player it was watching had already been killed.
+      run.hearts = 9;
+      run.bossDeadline = null;
+      step(run, 1 / 60, { x: 0.2, y: 0.1 }, rng);
+      for (const e of run.enemies) seen.add(e.kind);
+      hazards = Math.max(hazards, run.hazards.length);
+    }
+    expect([...seen].sort()).toEqual(["charger", "shooter", "walker"]);
+    expect(hazards).toBeGreaterThan(0);
+  });
+
+  it("charges where you were, not where you are", () => {
+    // A charge that steers is a fast walker. This is the whole reason the
+    // kind exists: it commits, and stepping aside works.
+    const rng = seeded(22);
+    const run = createRun(rng);
+    run.enemies = [
+      { x: 0.5, y: 0.2, health: 999, maxHealth: 999, speed: 0, hitCd: 99, kind: "charger" as const, cd: 0 },
+    ];
+    run.player = { x: 0.5, y: 0.5 };
+    step(run, 1 / 60, { x: 0, y: 0 }, rng);
+    const charger = run.enemies[0];
+    expect(charger.dash).toBeTruthy();
+    const aim = { ...charger.dash! };
+    run.player = { x: 0.1, y: 0.5 };
+    for (let i = 0; i < 10; i++) step(run, 1 / 60, { x: 0, y: 0 }, rng);
+    expect(charger.dash!.x).toBeCloseTo(aim.x, 5);
+    expect(charger.dash!.y).toBeCloseTo(aim.y, 5);
   });
 });
 

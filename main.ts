@@ -245,7 +245,29 @@ if (mount) {
 
     for (const e of run.enemies) {
       const r = ps(e.boss ? 0.019 + BOSS_RADIUS : 0.019);
+      // A shape per kind, so what something is about to do is legible before
+      // it does it. The walker is a solid diamond, the shooter is a hollow
+      // ring with a dot in it — an eye — and the charger is a wedge that
+      // points where it is going and flares white while it is winding up.
       ctx.fillStyle = e.hitCd > 0 ? "#c9a0a0" : e.boss ? "#b06a86" : "#8e7fa8";
+      ctx.strokeStyle = ctx.fillStyle as string;
+      if (e.kind === "shooter" && !e.boss) {
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(px(e.x), py(e.y), r, 0, Math.PI * 2);
+        ctx.stroke();
+        disc(px(e.x), py(e.y), r * 0.42, "#d8c2e8");
+      } else if (e.kind === "charger" && !e.boss) {
+        const winding = e.cd < 0.6 && !e.dash;
+        const a = Math.atan2(run.player.y - e.y, run.player.x - e.x);
+        ctx.fillStyle = e.dash ? "#f0e6f6" : winding ? "#c8b2dd" : "#8e7fa8";
+        ctx.beginPath();
+        ctx.moveTo(px(e.x) + Math.cos(a) * r * 1.7, py(e.y) + Math.sin(a) * r * 1.7);
+        ctx.lineTo(px(e.x) + Math.cos(a + 2.4) * r, py(e.y) + Math.sin(a + 2.4) * r);
+        ctx.lineTo(px(e.x) + Math.cos(a - 2.4) * r, py(e.y) + Math.sin(a - 2.4) * r);
+        ctx.closePath();
+        ctx.fill();
+      } else {
       ctx.beginPath();
       ctx.moveTo(px(e.x), py(e.y) - r);
       ctx.lineTo(px(e.x) + r, py(e.y));
@@ -253,6 +275,7 @@ if (mount) {
       ctx.lineTo(px(e.x) - r, py(e.y));
       ctx.closePath();
       ctx.fill();
+      }
       // How much is left of it, as an arc around it. A big shape that never
       // visibly changes reads as invulnerable, and a player who thinks a
       // thing cannot be hurt stops trying to hurt it.
@@ -263,6 +286,13 @@ if (mount) {
         ctx.arc(px(e.x), py(e.y), r + 6, -Math.PI / 2, -Math.PI / 2 + (e.health / e.maxHealth) * Math.PI * 2);
         ctx.stroke();
       }
+    }
+
+    // Enemy shot. Red, because everything on this page that can take a heart
+    // off you is red and nothing else is.
+    for (const h of run.hazards) {
+      disc(px(h.x), py(h.y), ps(0.011), "#e05c5c");
+      disc(px(h.x), py(h.y), ps(0.005), "#ffd9d9");
     }
 
     for (const s of run.shots) {
