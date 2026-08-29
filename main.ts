@@ -235,7 +235,7 @@ if (mount) {
       // Bigger and brighter when it came out of something you killed, because
       // it is worth more and the difference is the reason to go there.
       const big = o.value > 1;
-      disc(px(o.x), py(o.y), ps(big ? 0.013 : 0.008), big ? "#f2c274" : "rgb(232 178 92 / 62%)");
+      disc(px(o.x), py(o.y), ps(big ? 0.014 : 0.009), big ? "#f7cd85" : "#c9993f");
       disc(px(o.x), py(o.y), ps(big ? 0.006 : 0.0035), "#fff3dc");
     }
 

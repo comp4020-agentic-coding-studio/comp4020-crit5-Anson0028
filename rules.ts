@@ -79,8 +79,12 @@ const KILL_ORB_VALUE = 2.5;
 // confetti.
 const ORB_LIFE_S = 1e9;
 const FIELD_ORBS_AT_START = 14;
-const FIELD_ORB_INTERVAL = 1.1;
-const MAX_ORBS = 46;
+const FIELD_ORB_INTERVAL = 1.6;
+// Forty-six of them, never decaying, carpeted the arena: at that density they
+// stop reading as things to pick up and start reading as background texture,
+// and a player who has killed thirty-one things is still on level two because
+// none of it is close enough to walk over by accident.
+const MAX_ORBS = 26;
 const ORBIT_RADIUS = 0.10;
 const ORBIT_RATE = 2.0; // turns per second
 // A wide shard, not a point. At 0.045 and 2.6 turns a second the swept
@@ -174,7 +178,7 @@ export function createRun(rng: () => number = Math.random): Run {
 export const moveSpeed = (b: Build) => PLAYER_SPEED * (1 + 0.30 * b.speed);
 export const damageMul = (b: Build) => 1 + 0.30 * b.damage;
 export const rateMul = (b: Build) => 1 + 0.32 * b.rate;
-export const magnetRadius = (b: Build) => 0.055 * (1 + 1.0 * b.magnet);
+export const magnetRadius = (b: Build) => 0.075 * (1 + 0.9 * b.magnet);
 
 /**
  * What one orb is worth. Radius alone made this upgrade a trap: measured at
@@ -474,12 +478,18 @@ export const chaseXpPolicy: Policy = (run) => {
     x += ((o.x - run.player.x) / d) * 1.0;
     y += ((o.y - run.player.y) / d) * 1.0;
   }
+  // Give way early and widely. At a 0.12 radius this player only stepped
+  // aside once something was almost touching it, which is not how anybody
+  // plays and — once a boss window arrived that has to be survived rather
+  // than won — meant every build died at the same wall and the pool
+  // comparison saturated at the bottom instead of the top.
   for (const e of run.enemies) {
     const d = dist(e, run.player);
-    if (d < 0.12) {
-      const w = (0.12 - d) / 0.12;
-      x -= ((e.x - run.player.x) / (d || 1)) * w * 4.0;
-      y -= ((e.y - run.player.y) / (d || 1)) * w * 4.0;
+    const reach = e.boss ? 0.30 : 0.20;
+    if (d < reach) {
+      const w = (reach - d) / reach;
+      x -= ((e.x - run.player.x) / (d || 1)) * w * 5.0;
+      y -= ((e.y - run.player.y) / (d || 1)) * w * 5.0;
     }
   }
   // Always a pull back towards the middle, not just near the wall: the first
