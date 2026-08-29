@@ -24,8 +24,8 @@
     <main>
       <!-- A name, and nothing else. No lede, no hint, no controls list: the
            brief bans instructions anywhere, and the opening state teaches
-           instead — one orb a short walk away, and nothing moving until it is
-           taken.
+           instead — a field with experience already lying on it, and nothing
+           moving until the first piece is picked up.
 
            The canvas is here in the markup rather than created at runtime.
            The first version built it in JS and the check that says "there is
@@ -38,7 +38,7 @@
           data-testid="play"
           role="application"
           tabindex="0"
-          aria-label="A survival arena. Move with the arrow keys, WASD, or by dragging. Shards circle you and destroy what touches them; walk over what they leave behind to grow stronger. Survive two minutes."
+          aria-label="A survival arena. Move with the arrow keys, WASD, or by dragging. You fire at whatever is nearest on your own; walk over the experience lying on the ground to grow stronger. Survive two minutes."
         ></canvas>
         <div class="cards" data-testid="cards" hidden></div>
         <div data-testid="game-state" data-moves="0" hidden></div>

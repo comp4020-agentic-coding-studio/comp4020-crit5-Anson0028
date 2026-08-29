@@ -197,18 +197,20 @@ if (mount) {
     ctx.fillStyle = "#0d0d12";
     ctx.fillRect(ox, oy, side, side);
 
-    // Timer along the top and experience along the bottom: two bars, no
-    // numbers, both filling left to right. What they are is learned by
-    // watching them move.
-    ctx.fillStyle = "rgb(233 230 223 / 8%)";
-    ctx.fillRect(ox, oy, side, 3);
-    ctx.fillStyle = "rgb(233 230 223 / 45%)";
-    ctx.fillRect(ox, oy, side * Math.min(1, run.elapsedMs / RUN_MS), 3);
-    const need = xpForLevel(run.level);
-    ctx.fillStyle = "rgb(232 178 92 / 12%)";
-    ctx.fillRect(ox, oy + side - 3, side, 3);
-    ctx.fillStyle = "var(--accent)";
+    // Two bars, no numbers. The top one is the run: it fills left to right
+    // over two minutes and reaching the end of it is how you win. It used to
+    // be three pixels of off-white and read as decoration — somebody who had
+    // played the game asked me what it was for — so it is thick, gold, and
+    // the only gold thing up there. Experience is the thin blue one at the
+    // bottom, a different colour because it is a different quantity.
+    ctx.fillStyle = "rgb(232 178 92 / 10%)";
+    ctx.fillRect(ox, oy, side, 6);
     ctx.fillStyle = "#e8b25c";
+    ctx.fillRect(ox, oy, side * Math.min(1, run.elapsedMs / RUN_MS), 6);
+    const need = xpForLevel(run.level);
+    ctx.fillStyle = "rgb(159 208 255 / 12%)";
+    ctx.fillRect(ox, oy + side - 3, side, 3);
+    ctx.fillStyle = "#9fd0ff";
     ctx.fillRect(ox, oy + side - 3, side * Math.min(1, run.xp / need), 3);
 
     for (let i = 0; i < run.hearts; i++) {
@@ -299,7 +301,7 @@ if (mount) {
       // How far you got, left along the top: the timer bar is the score, and
       // it is already on screen.
       ctx.fillStyle = won ? "#e8b25c" : "#e05c5c";
-      ctx.fillRect(ox, oy, side * Math.min(1, run.elapsedMs / RUN_MS), 3);
+      ctx.fillRect(ox, oy, side * Math.min(1, run.elapsedMs / RUN_MS), 6);
     }
   }
 
@@ -335,16 +337,21 @@ if (mount) {
         started = false;
       }
     } else if (!started) {
-      // Frozen until the first orb is taken: no clock, no spawns.
-      if (run.orbs.length === 0) run.orbs.push({ x: 0.5, y: 0.34, life: 9e9 });
+      // Frozen until the first orb is taken: no clock, no spawns. The field
+      // already has experience lying on it, so the opening screen is a room
+      // full of things worth walking to and nothing that can hurt you.
       const mag = Math.hypot(input.x, input.y);
       if (mag > 0) {
         const s = 0.30 * dt;
         run.player.x = Math.min(1, Math.max(0, run.player.x + (input.x / mag) * s));
         run.player.y = Math.min(1, Math.max(0, run.player.y + (input.y / mag) * s));
       }
-      if (Math.hypot(run.orbs[0].x - run.player.x, run.orbs[0].y - run.player.y) < 0.03) {
-        run.orbs = [];
+      const reach = magnetRadius(run.build);
+      const took = run.orbs.findIndex(
+        (o) => Math.hypot(o.x - run.player.x, o.y - run.player.y) < reach,
+      );
+      if (took >= 0) {
+        run.orbs.splice(took, 1);
         run.xp = 1;
         started = true;
       }

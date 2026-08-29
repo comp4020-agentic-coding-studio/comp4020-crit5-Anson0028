@@ -70,7 +70,11 @@ describe("spec: a wrong move is possible", () => {
     // played badly — not that it is hard, but that where you stand decides
     // the outcome, which is the whole game.
     const run = createRun();
-    run.enemies = [{ x: 0.5, y: 0.42, health: 10, speed: 0, hitCd: 99 }];
+    // Tough enough to survive being shot at, because the claim under test is
+    // about where you stand and not about how fast you kill. At ten health the
+    // opening bolt destroyed it before it could touch anybody and the
+    // assertion failed for the wrong reason.
+    run.enemies = [{ x: 0.5, y: 0.42, health: 5000, speed: 0, hitCd: 99 }];
     run.player = { x: 0.5, y: 0.5 };
     const into = structuredClone(run);
     const away = structuredClone(run);
@@ -91,14 +95,26 @@ describe("spec: play ends somewhere", () => {
     expect(ms).toBeGreaterThanOrEqual(RUN_MS);
   });
 
-  it("cannot be won by running away", () => {
-    // This started as the win test, with fleeing as my guess at competent
-    // play, and it lost. Fleeing never walks over an orb, so it never levels,
-    // so it never gets a weapon, so nothing it runs from ever dies and the
-    // arena fills up. That is the game working: the orbs land where the
-    // fighting was, and the only way to get stronger is to go back into it.
-    // It is a better assertion than the one I meant to write.
-    expect(runHeadless(fleePolicy, seeded(5)).outcome).toBe("lost");
+  it("rewards going towards the experience over running from the danger", () => {
+    // This assertion used to read "cannot be won by running away", and it was
+    // true when the only experience in the game dropped out of dead enemies:
+    // fleeing never walked over an orb, so it never levelled, so nothing it
+    // ran from ever died. Experience now lies on the field from the first
+    // second and keeps arriving, so hoovering it up while retreating is a
+    // real strategy and the old assertion was describing a game that no
+    // longer exists. What survived the change is the preference, and that is
+    // what is asserted: measured over fifteen runs, going for it wins six and
+    // survives 101.9s, running away wins none and survives 74.7s.
+    const trials = 9;
+    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+    const runs = (policy: typeof chaseXpPolicy) =>
+      median(
+        Array.from({ length: trials }, (_, i) => {
+          const rng = seeded((i + 1) * 97);
+          return runHeadless(withReaction(policy, rng), rng, "first").ms;
+        }),
+      );
+    expect(runs(chaseXpPolicy)).toBeGreaterThan(runs(fleePolicy));
   });
 
   it("can be lost", () => {

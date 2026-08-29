@@ -56,13 +56,20 @@ export type Run = {
   elapsedMs: number;
   outcome: "playing" | "won" | "lost";
   orbitPhase: number;
-  cooldowns: { bolt: number; nova: number; spawn: number };
+  cooldowns: { bolt: number; nova: number; spawn: number; field: number };
 };
 
 const PLAYER_SPEED = 0.26; // arena-fractions per second, before upgrades
 const CONTACT_RADIUS = 0.030;
 const INVULNERABLE_S = 1.2;
-const ORB_LIFE_S = 8;
+// Orbs do not rot. The field is meant to fill up: some are lying there before
+// the first enemy arrives, and more keep arriving, so there is always
+// something worth walking to. Capped only so the arena does not turn to
+// confetti.
+const ORB_LIFE_S = 1e9;
+const FIELD_ORBS_AT_START = 14;
+const FIELD_ORB_INTERVAL = 1.4;
+const MAX_ORBS = 46;
 const ORBIT_RADIUS = 0.10;
 const ORBIT_RATE = 2.0; // turns per second
 // A wide shard, not a point. At 0.045 and 2.6 turns a second the swept
@@ -88,22 +95,28 @@ function emptyBuild(): Build {
   return { speed: 0, damage: 0, rate: 0, magnet: 0, orbit: 0, bolt: 0, nova: 0 };
 }
 
-export function createRun(): Run {
+export function createRun(rng: () => number = Math.random): Run {
+  const scattered: Orb[] = [];
+  for (let i = 0; i < FIELD_ORBS_AT_START; i++) {
+    // Never right on top of the player: the first one has to be walked to.
+    const a = rng() * Math.PI * 2;
+    const r = 0.12 + rng() * 0.36;
+    scattered.push({ x: clamp01(0.5 + Math.cos(a) * r), y: clamp01(0.5 + Math.sin(a) * r), life: ORB_LIFE_S });
+  }
   return {
     player: { x: 0.5, y: 0.5 },
     hearts: START_HEARTS,
     invulnerableFor: 0,
     enemies: [],
-    orbs: [],
+    orbs: scattered,
     shots: [],
-    // One weapon from the start. Without it the player kills nothing, so no
-    // orbs drop, so no level ever arrives — the headless runs showed "take
-    // speed" and "take nothing" producing runs identical to the millisecond,
-    // which is what an unplayable game looks like from inside a test. The
-    // orbit is the right one to open with: it is the weapon that is purely
-    // about where you are standing, which is the only thing this game ever
-    // asks of anybody.
-    build: { ...emptyBuild(), orbit: 1 },
+    // One weapon from the start, and it is the one that shoots. The orbiting
+    // shard opened the game for a while and it asked too much: it only kills
+    // what you walk into, so a player who has not worked that out yet stands
+    // still and watches nothing die. A bolt that flies at the nearest thing
+    // answers the first key press with a kill, and the shard is still in the
+    // pool for anyone who wants it.
+    build: { ...emptyBuild(), bolt: 1 },
     xp: 0,
     level: 1,
     pending: null,
@@ -114,7 +127,7 @@ export function createRun(): Run {
     // The first weapon arrives almost immediately, because a player who has
     // pressed a key and seen nothing happen has already learned the wrong
     // thing about this game.
-    cooldowns: { bolt: 0, nova: 0, spawn: 0.4 },
+    cooldowns: { bolt: 0, nova: 0, spawn: 1.2, field: FIELD_ORB_INTERVAL },
   };
 }
 
@@ -138,8 +151,13 @@ export const magnetRadius = (b: Build) => 0.055 * (1 + 1.0 * b.magnet);
  */
 export const xpPerOrb = (b: Build) => 1 + 0.4 * b.magnet;
 
-/** How much XP a level costs. Rises, so the last upgrade is earned. */
-export const xpForLevel = (level: number) => 3 + level * 2;
+/** How much XP a level costs. Rises, so the last upgrade is earned — and
+ *  steeply enough that a run is not one long card screen. At 3 + 2L a
+ *  two-minute run reached level 24 — a level-up every five seconds, a game
+ *  about choosing rather than about moving. At 5 + 4L it reached nine and
+ *  most of the pool never came out. This is fourteen, about one every eight
+ *  seconds, and an ordinary player wins about two runs in five. */
+export const xpForLevel = (level: number) => 3 + level * 3;
 
 // --- levelling -------------------------------------------------------------
 
@@ -223,6 +241,16 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
     const s = moveSpeed(b) * dt;
     run.player.x = clamp01(run.player.x + (input.x / mag) * s);
     run.player.y = clamp01(run.player.y + (input.y / mag) * s);
+  }
+
+  // More experience keeps arriving, wherever it likes. The field is the
+  // reason to keep moving once the thing chasing you is dead.
+  run.cooldowns.field -= dt;
+  if (run.cooldowns.field <= 0) {
+    run.cooldowns.field += FIELD_ORB_INTERVAL;
+    if (run.orbs.length < MAX_ORBS) {
+      run.orbs.push({ x: clamp01(rng()), y: clamp01(rng()), life: ORB_LIFE_S });
+    }
   }
 
   const p = spawnPressure(run.elapsedMs);
@@ -449,7 +477,7 @@ export function runHeadless(
   rng: () => number,
   take: UpgradeId | "first" | "none" = "first",
 ): { outcome: Run["outcome"]; ms: number; run: Run } {
-  const run = createRun();
+  const run = createRun(rng);
   const dt = 1 / 60;
   while (run.outcome === "playing" && run.elapsedMs < RUN_MS) {
     if (run.pending) {
