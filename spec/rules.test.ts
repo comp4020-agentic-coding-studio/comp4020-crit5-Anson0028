@@ -69,7 +69,7 @@ describe("spec: a wrong move is possible", () => {
     // played badly — not that it is hard, but that where you stand decides
     // the outcome, which is the whole game.
     const run = createRun();
-    run.enemies = [{ x: 0.5, y: 0.42, health: 10, speed: 0 }];
+    run.enemies = [{ x: 0.5, y: 0.42, health: 10, speed: 0, hitCd: 99 }];
     run.player = { x: 0.5, y: 0.5 };
     const into = structuredClone(run);
     const away = structuredClone(run);
@@ -84,10 +84,20 @@ describe("spec: a wrong move is possible", () => {
 });
 
 describe("spec: play ends somewhere", () => {
-  it("can be won by surviving the run", () => {
-    const { outcome, ms } = runHeadless(fleePolicy, seeded(5));
+  it("can be won by going and getting the experience", () => {
+    const { outcome, ms } = runHeadless(chaseXpPolicy, seeded(5));
     expect(outcome).toBe("won");
     expect(ms).toBeGreaterThanOrEqual(RUN_MS);
+  });
+
+  it("cannot be won by running away", () => {
+    // This started as the win test, with fleeing as my guess at competent
+    // play, and it lost. Fleeing never walks over an orb, so it never levels,
+    // so it never gets a weapon, so nothing it runs from ever dies and the
+    // arena fills up. That is the game working: the orbs land where the
+    // fighting was, and the only way to get stronger is to go back into it.
+    // It is a better assertion than the one I meant to write.
+    expect(runHeadless(fleePolicy, seeded(5)).outcome).toBe("lost");
   });
 
   it("can be lost", () => {
@@ -101,7 +111,10 @@ describe("spec: play ends somewhere", () => {
     // its own length. An unbounded run is an unfinishable game.
     for (let seed = 1; seed <= 12; seed++) {
       const { ms } = runHeadless(chaseXpPolicy, seeded(seed));
-      expect(ms).toBeLessThanOrEqual(RUN_MS);
+      // Plus one frame: a win is declared on the step that crosses RUN_MS, so
+      // the run can end a sixtieth of a second past its own length. The first
+      // version of this asserted an exact ceiling and went red on wins.
+      expect(ms).toBeLessThanOrEqual(RUN_MS + 1000 / 60);
     }
   });
 });
@@ -111,18 +124,21 @@ describe("spec: no upgrade in the pool is a trap", () => {
     // Measured, not asserted from the design. A pool where one option is a
     // punishment makes the three-card choice a trap for a player who cannot
     // read the numbers — and there are no numbers to read, by design.
-    const baseline = median(runsWith([], 9));
+    // Fifteen runs each. Nine was not enough to separate a dead upgrade from a
+    // live one: at nine, damage measured half a second *worse* than taking
+    // nothing, which was noise wearing a finding's clothes.
+    const baseline = median(runsTaking("none", 15));
     for (const upgrade of UPGRADES) {
-      const withIt = median(runsWith([upgrade.id, upgrade.id, upgrade.id], 9));
-      expect(withIt, `${upgrade.id} is not worth taking`).toBeGreaterThanOrEqual(baseline);
+      const withIt = median(runsTaking(upgrade.id, 15));
+      expect(withIt, `${upgrade.id} is not worth taking`).toBeGreaterThan(baseline);
     }
   });
 });
 
-function runsWith(ids: string[], trials: number): number[] {
+function runsTaking(take: Parameters<typeof runHeadless>[2], trials: number): number[] {
   const out: number[] = [];
   for (let seed = 1; seed <= trials; seed++) {
-    out.push(runHeadless(chaseXpPolicy, seeded(seed * 97), ids as never).ms);
+    out.push(runHeadless(chaseXpPolicy, seeded(seed * 97), take).ms);
   }
   return out;
 }
