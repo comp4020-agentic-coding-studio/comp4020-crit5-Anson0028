@@ -18,6 +18,8 @@ import {
   chaseXpPolicy,
   fleePolicy,
   withReaction,
+  BOSS_TIMES_MS,
+  BOSS_WINDOW_MS,
 } from "../rules";
 
 const seeded = (n: number) => {
@@ -74,7 +76,7 @@ describe("spec: a wrong move is possible", () => {
     // about where you stand and not about how fast you kill. At ten health the
     // opening bolt destroyed it before it could touch anybody and the
     // assertion failed for the wrong reason.
-    run.enemies = [{ x: 0.5, y: 0.42, health: 5000, speed: 0, hitCd: 99 }];
+    run.enemies = [{ x: 0.5, y: 0.42, health: 5000, maxHealth: 5000, speed: 0, hitCd: 99 }];
     run.player = { x: 0.5, y: 0.5 };
     const into = structuredClone(run);
     const away = structuredClone(run);
@@ -95,26 +97,29 @@ describe("spec: play ends somewhere", () => {
     expect(ms).toBeGreaterThanOrEqual(RUN_MS);
   });
 
-  it("rewards going towards the experience over running from the danger", () => {
-    // This assertion used to read "cannot be won by running away", and it was
-    // true when the only experience in the game dropped out of dead enemies:
-    // fleeing never walked over an orb, so it never levelled, so nothing it
-    // ran from ever died. Experience now lies on the field from the first
-    // second and keeps arriving, so hoovering it up while retreating is a
-    // real strategy and the old assertion was describing a game that no
-    // longer exists. What survived the change is the preference, and that is
-    // what is asserted: measured over fifteen runs, going for it wins six and
-    // survives 101.9s, running away wins none and survives 74.7s.
-    const trials = 9;
-    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
-    const runs = (policy: typeof chaseXpPolicy) =>
-      median(
-        Array.from({ length: trials }, (_, i) => {
-          const rng = seeded((i + 1) * 97);
-          return runHeadless(withReaction(policy, rng), rng, "first").ms;
-        }),
-      );
-    expect(runs(chaseXpPolicy)).toBeGreaterThan(runs(fleePolicy));
+  it("cannot be won by declining every card, however well you dodge", () => {
+    // This assertion has been rewritten twice by measurements, and both
+    // rewrites were the game changing under it rather than the test being
+    // wrong. It began as "cannot be won by running away", which held while
+    // the only experience fell out of dead enemies. Experience on the field
+    // killed that, so it became "going for it beats running from it" — and
+    // then the boss killed *that*, because a boss window is a survival check
+    // and dodging is how you survive: measured, fleeing now outlives chasing,
+    // 120s against 56s.
+    //
+    // What is true of the game as it now stands is the thing worth asserting.
+    // Whatever you do with your feet, the first boss has more health than the
+    // opening weapon can remove inside its window, so a run that took no
+    // upgrades ends there.
+    const wall = BOSS_TIMES_MS[0] + BOSS_WINDOW_MS;
+    for (const policy of [chaseXpPolicy, fleePolicy]) {
+      for (let seed = 1; seed <= 6; seed++) {
+        const rng = seeded(seed * 97);
+        const { outcome, ms } = runHeadless(withReaction(policy, rng), rng, "none");
+        expect(outcome).toBe("lost");
+        expect(ms).toBeLessThanOrEqual(wall + 200);
+      }
+    }
   });
 
   it("can be lost", () => {
@@ -133,6 +138,47 @@ describe("spec: play ends somewhere", () => {
       // version of this asserted an exact ceiling and went red on wins.
       expect(ms).toBeLessThanOrEqual(RUN_MS + 1000 / 60);
     }
+  });
+});
+
+describe("the boss is where not gathering gets asked about", () => {
+  it("arrives on the clock, with a clock of its own", () => {
+    const rng = seeded(11);
+    const run = createRun(rng);
+    while (run.elapsedMs < BOSS_TIMES_MS[0] - 100) {
+      if (run.pending) run.pending = null;
+      step(run, 1 / 60, { x: 0, y: 0 }, rng);
+      if (run.outcome !== "playing") break;
+    }
+    expect(run.enemies.some((e) => e.boss)).toBe(false);
+    for (let i = 0; i < 12; i++) step(run, 1 / 60, { x: 0, y: 0 }, rng);
+    expect(run.enemies.some((e) => e.boss)).toBe(true);
+    expect(run.bossDeadline).toBeCloseTo(BOSS_TIMES_MS[0] + BOSS_WINDOW_MS, -2);
+  });
+
+  it("ends a run that never picked anything up, and at the wall rather than slowly", () => {
+    // The rule the whole design turns on. A player who has been gathering can
+    // put the first boss down inside its window; one who declined every card
+    // cannot, and the run stops there. Without this the punishment for not
+    // levelling was only that you died a bit sooner, which is not something a
+    // player can notice, let alone learn from.
+    const wall = BOSS_TIMES_MS[0] + BOSS_WINDOW_MS;
+    for (let seed = 1; seed <= 9; seed++) {
+      const rng = seeded(seed * 97);
+      const { outcome, ms } = runHeadless(withReaction(chaseXpPolicy, rng), rng, "none");
+      expect(outcome).toBe("lost");
+      expect(ms).toBeLessThanOrEqual(wall + 200);
+    }
+  });
+
+  it("is passable by a player who did", () => {
+    const wall = BOSS_TIMES_MS[0] + BOSS_WINDOW_MS;
+    let past = 0;
+    for (let seed = 1; seed <= 9; seed++) {
+      const rng = seeded(seed * 97);
+      if (runHeadless(withReaction(fleePolicy, rng), rng, "first").ms > wall) past++;
+    }
+    expect(past).toBeGreaterThan(4);
   });
 });
 

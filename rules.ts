@@ -7,8 +7,8 @@
 // Everything is in normalised arena coordinates, 0 to 1 on both axes.
 
 export type Vec2 = { x: number; y: number };
-export type Enemy = Vec2 & { health: number; speed: number; hitCd: number; counted?: boolean };
-export type Orb = Vec2 & { life: number };
+export type Enemy = Vec2 & { health: number; maxHealth: number; speed: number; hitCd: number; counted?: boolean; boss?: boolean };
+export type Orb = Vec2 & { life: number; value: number };
 export type Shot = Vec2 & { dx: number; dy: number; life: number };
 export type Input = { x: number; y: number };
 
@@ -53,6 +53,9 @@ export type Run = {
   level: number;
   pending: UpgradeId[] | null;
   kills: number;
+  bossIndex: number;
+  /** When the boss on the field has to be dead by, or the run is over. */
+  bossDeadline: number | null;
   elapsedMs: number;
   outcome: "playing" | "won" | "lost";
   orbitPhase: number;
@@ -62,13 +65,21 @@ export type Run = {
 const PLAYER_SPEED = 0.26; // arena-fractions per second, before upgrades
 const CONTACT_RADIUS = 0.030;
 const INVULNERABLE_S = 1.2;
+// What a piece of experience is worth. The ones lying on the field are worth
+// one; the ones that fall out of something you killed are worth more. With
+// everything worth the same, running away and hoovering up the free stuff
+// beat going anywhere near the fighting — 102 seconds against 87 — which is
+// the opposite of what this game is supposed to be about.
+const FIELD_ORB_VALUE = 1;
+const KILL_ORB_VALUE = 2.5;
+
 // Orbs do not rot. The field is meant to fill up: some are lying there before
 // the first enemy arrives, and more keep arriving, so there is always
 // something worth walking to. Capped only so the arena does not turn to
 // confetti.
 const ORB_LIFE_S = 1e9;
 const FIELD_ORBS_AT_START = 14;
-const FIELD_ORB_INTERVAL = 1.4;
+const FIELD_ORB_INTERVAL = 1.1;
 const MAX_ORBS = 46;
 const ORBIT_RADIUS = 0.10;
 const ORBIT_RATE = 2.0; // turns per second
@@ -90,6 +101,28 @@ const ORBIT_HIT = 0.062;
 const ORBIT_DAMAGE = 12;
 const ORBIT_HIT_CD = 0.40; // seconds an enemy is immune to the shards for
 const SHOT_SPEED = 0.75;
+// The opening weapon was doing 22 a shot every 0.75 seconds, which flattened
+// the first minute: nothing that arrived early lived long enough to be a
+// problem, so there was nothing to learn from. Slower and weaker — it still
+// answers the first key press with a kill, it just stops answering all of
+// them.
+const BOLT_DAMAGE = 17;
+const BOLT_INTERVAL = 0.85;
+
+// Something with real health, twice a run, on a clock. This is where the
+// experience you did or did not pick up gets asked about: a player who has
+// been gathering can put a boss down inside the window, and a player who has
+// been dodging in a corner cannot, and loses there rather than slowly.
+export const BOSS_TIMES_MS = [40_000, 80_000] as const;
+export const BOSS_WINDOW_MS = 22_000;
+// Sized so the opening weapon on its own cannot do it. Base damage is about
+// 20 a second and the window is 22, so anything under 440 is a boss a player
+// who declined every card can still kill — and at 200 they did, eleven runs
+// out of fifteen. The gate has to actually be a gate.
+const BOSS_HEALTH = [620, 1500] as const;
+const BOSS_SPEED = [0.10, 0.13] as const;
+export const BOSS_RADIUS = 0.055;
+const BOSS_ORBS = 10;
 
 function emptyBuild(): Build {
   return { speed: 0, damage: 0, rate: 0, magnet: 0, orbit: 0, bolt: 0, nova: 0 };
@@ -101,7 +134,7 @@ export function createRun(rng: () => number = Math.random): Run {
     // Never right on top of the player: the first one has to be walked to.
     const a = rng() * Math.PI * 2;
     const r = 0.12 + rng() * 0.36;
-    scattered.push({ x: clamp01(0.5 + Math.cos(a) * r), y: clamp01(0.5 + Math.sin(a) * r), life: ORB_LIFE_S });
+    scattered.push({ x: clamp01(0.5 + Math.cos(a) * r), y: clamp01(0.5 + Math.sin(a) * r), life: ORB_LIFE_S, value: FIELD_ORB_VALUE });
   }
   return {
     player: { x: 0.5, y: 0.5 },
@@ -121,6 +154,8 @@ export function createRun(rng: () => number = Math.random): Run {
     level: 1,
     pending: null,
     kills: 0,
+    bossIndex: 0,
+    bossDeadline: null,
     elapsedMs: 0,
     outcome: "playing",
     orbitPhase: 0,
@@ -157,7 +192,7 @@ export const xpPerOrb = (b: Build) => 1 + 0.4 * b.magnet;
  *  about choosing rather than about moving. At 5 + 4L it reached nine and
  *  most of the pool never came out. This is fourteen, about one every eight
  *  seconds, and an ordinary player wins about two runs in five. */
-export const xpForLevel = (level: number) => 3 + level * 3;
+export const xpForLevel = (level: number) => 3 + level * 2;
 
 // --- levelling -------------------------------------------------------------
 
@@ -197,8 +232,8 @@ function dist(a: Vec2, b: Vec2): number {
 function spawnPressure(elapsedMs: number): { interval: number; health: number; speed: number; count: number } {
   const t = elapsedMs / RUN_MS;
   return {
-    interval: 1.7 - 1.35 * t,
-    health: 3 + 34 * t,
+    interval: 1.9 - 1.35 * t,
+    health: 3 + 26 * t,
     // Fast enough by the end to catch a player who has not levelled their
     // legs: 0.29 against a base 0.26. When they topped out under the player's
     // own speed, the movement card measured at nothing, because there was
@@ -217,7 +252,7 @@ function spawnEnemy(run: Run, rng: () => number, p: ReturnType<typeof spawnPress
     : edge === 1 ? { x: along, y: 1.03 }
     : edge === 2 ? { x: -0.03, y: along }
     : { x: 1.03, y: along };
-  run.enemies.push({ ...at, health: p.health, speed: p.speed, hitCd: 0 });
+  run.enemies.push({ ...at, health: p.health, maxHealth: p.health, speed: p.speed, hitCd: 0 });
 }
 
 function hurt(run: Run, enemy: Enemy, amount: number): void {
@@ -225,7 +260,13 @@ function hurt(run: Run, enemy: Enemy, amount: number): void {
   if (enemy.health <= 0 && !enemy.counted) {
     enemy.counted = true;
     run.kills++;
-    run.orbs.push({ x: enemy.x, y: enemy.y, life: ORB_LIFE_S });
+    // A boss pays for the fight it just cost you.
+    const drops = enemy.boss ? BOSS_ORBS : 1;
+    for (let i = 0; i < drops; i++) {
+      const a = (i / drops) * Math.PI * 2;
+      const r = enemy.boss ? 0.05 : 0;
+      run.orbs.push({ x: clamp01(enemy.x + Math.cos(a) * r), y: clamp01(enemy.y + Math.sin(a) * r), life: ORB_LIFE_S, value: KILL_ORB_VALUE });
+    }
   }
 }
 
@@ -249,14 +290,37 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
   if (run.cooldowns.field <= 0) {
     run.cooldowns.field += FIELD_ORB_INTERVAL;
     if (run.orbs.length < MAX_ORBS) {
-      run.orbs.push({ x: clamp01(rng()), y: clamp01(rng()), life: ORB_LIFE_S });
+      run.orbs.push({ x: clamp01(rng()), y: clamp01(rng()), life: ORB_LIFE_S, value: FIELD_ORB_VALUE });
+    }
+  }
+
+  if (run.bossIndex < BOSS_TIMES_MS.length && run.elapsedMs >= BOSS_TIMES_MS[run.bossIndex]) {
+    const i = run.bossIndex++;
+    const edge = Math.floor(rng() * 4);
+    const along = rng();
+    const at =
+      edge === 0 ? { x: along, y: -0.05 }
+      : edge === 1 ? { x: along, y: 1.05 }
+      : edge === 2 ? { x: -0.05, y: along }
+      : { x: 1.05, y: along };
+    run.enemies.push({ ...at, health: BOSS_HEALTH[i], maxHealth: BOSS_HEALTH[i], speed: BOSS_SPEED[i], hitCd: 0, boss: true });
+    run.bossDeadline = run.elapsedMs + BOSS_WINDOW_MS;
+  }
+  const bossAlive = run.enemies.some((e) => e.boss);
+  if (run.bossDeadline !== null) {
+    if (!bossAlive) run.bossDeadline = null;
+    else if (run.elapsedMs >= run.bossDeadline) {
+      run.outcome = "lost";
+      return;
     }
   }
 
   const p = spawnPressure(run.elapsedMs);
   run.cooldowns.spawn -= dt;
   if (run.cooldowns.spawn <= 0) {
-    for (let i = 0; i < p.count; i++) spawnEnemy(run, rng, p);
+    // The arena stops filling while a boss is on it: the fight is the whole
+    // question, and burying it in trash makes it about luck instead.
+    if (!bossAlive) for (let i = 0; i < p.count; i++) spawnEnemy(run, rng, p);
     run.cooldowns.spawn += p.interval;
   }
 
@@ -276,7 +340,7 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
       const a = run.orbitPhase + (i * Math.PI * 2) / b.orbit;
       const at = { x: run.player.x + Math.cos(a) * ORBIT_RADIUS, y: run.player.y + Math.sin(a) * ORBIT_RADIUS };
       for (const e of run.enemies) {
-        if (e.hitCd <= 0 && dist(e, at) < ORBIT_HIT) {
+        if (e.hitCd <= 0 && dist(e, at) < ORBIT_HIT + (e.boss ? BOSS_RADIUS : 0)) {
           hurt(run, e, ORBIT_DAMAGE * damageMul(b));
           e.hitCd = ORBIT_HIT_CD / rateMul(b);
         }
@@ -287,7 +351,7 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
   if (b.bolt > 0) {
     run.cooldowns.bolt -= dt * rateMul(b);
     if (run.cooldowns.bolt <= 0) {
-      run.cooldowns.bolt += 0.75;
+      run.cooldowns.bolt += BOLT_INTERVAL;
       const alive = run.enemies.filter((e) => e.health > 0);
       for (let i = 0; i < b.bolt && alive.length > 0; i++) {
         const target = alive.reduce((best, e) => (dist(e, run.player) < dist(best, run.player) ? e : best), alive[0]);
@@ -310,7 +374,7 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
       run.cooldowns.nova += 2.6;
       const radius = 0.10 + 0.035 * b.nova;
       for (const e of run.enemies) {
-        if (dist(e, run.player) < radius) hurt(run, e, 16 * b.nova * damageMul(b));
+        if (dist(e, run.player) < radius + (e.boss ? BOSS_RADIUS : 0)) hurt(run, e, 16 * b.nova * damageMul(b));
       }
     }
   }
@@ -320,8 +384,8 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
     s.y += s.dy * SHOT_SPEED * dt;
     s.life -= dt;
     for (const e of run.enemies) {
-      if (e.health > 0 && dist(e, s) < 0.026) {
-        hurt(run, e, 22 * damageMul(b));
+      if (e.health > 0 && dist(e, s) < 0.026 + (e.boss ? BOSS_RADIUS : 0)) {
+        hurt(run, e, BOLT_DAMAGE * damageMul(b));
         s.life = 0;
         break;
       }
@@ -334,7 +398,7 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
   // otherwise three frames of overlap take three hearts in fifty milliseconds.
   if (run.invulnerableFor <= 0) {
     for (const e of run.enemies) {
-      if (dist(e, run.player) < CONTACT_RADIUS) {
+      if (dist(e, run.player) < CONTACT_RADIUS + (e.boss ? BOSS_RADIUS : 0)) {
         run.hearts--;
         run.invulnerableFor = INVULNERABLE_S;
         break;
@@ -355,7 +419,7 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
       o.y += (run.player.y - o.y) * k;
     }
     if (dist(o, run.player) < 0.022) {
-      run.xp += xpPerOrb(b);
+      run.xp += o.value * xpPerOrb(b);
       return false;
     }
     return o.life > 0;

@@ -3,6 +3,8 @@
 // mouse and a finger into the one input the game takes — a direction.
 import {
   MAX_LEVEL,
+  BOSS_RADIUS,
+  BOSS_WINDOW_MS,
   RUN_MS,
   UPGRADES,
   applyUpgrade,
@@ -213,14 +215,28 @@ if (mount) {
     ctx.fillStyle = "#9fd0ff";
     ctx.fillRect(ox, oy + side - 3, side * Math.min(1, run.xp / need), 3);
 
+    // The boss clock: a red bar under the run bar, draining. Two minutes is
+    // the run; this is the much shorter one you are on while something big is
+    // on the field, and running it out is how a player who never picked
+    // anything up loses.
+    if (run.bossDeadline !== null) {
+      const left = Math.max(0, (run.bossDeadline - run.elapsedMs) / BOSS_WINDOW_MS);
+      ctx.fillStyle = "rgb(224 92 92 / 15%)";
+      ctx.fillRect(ox, oy + 7, side, 4);
+      ctx.fillStyle = "#e05c5c";
+      ctx.fillRect(ox, oy + 7, side * left, 4);
+    }
+
     for (let i = 0; i < run.hearts; i++) {
       disc(ox + 12 + i * 14, oy + 16, 4.5, "#e05c5c");
     }
 
     for (const o of run.orbs) {
-      const fade = Math.min(1, o.life / 1.2);
-      disc(px(o.x), py(o.y), ps(0.009), `rgb(232 178 92 / ${0.35 + fade * 0.65})`);
-      disc(px(o.x), py(o.y), ps(0.004), "#fff3dc");
+      // Bigger and brighter when it came out of something you killed, because
+      // it is worth more and the difference is the reason to go there.
+      const big = o.value > 1;
+      disc(px(o.x), py(o.y), ps(big ? 0.013 : 0.008), big ? "#f2c274" : "rgb(232 178 92 / 62%)");
+      disc(px(o.x), py(o.y), ps(big ? 0.006 : 0.0035), "#fff3dc");
     }
 
     // The pickup reach, drawn faintly. The one piece of state a player has to
@@ -228,8 +244,8 @@ if (mount) {
     ring(px(run.player.x), py(run.player.y), ps(magnetRadius(run.build)), "rgb(232 178 92 / 14%)", 1);
 
     for (const e of run.enemies) {
-      const r = ps(0.019);
-      ctx.fillStyle = e.hitCd > 0 ? "#c9a0a0" : "#8e7fa8";
+      const r = ps(e.boss ? 0.019 + BOSS_RADIUS : 0.019);
+      ctx.fillStyle = e.hitCd > 0 ? "#c9a0a0" : e.boss ? "#b06a86" : "#8e7fa8";
       ctx.beginPath();
       ctx.moveTo(px(e.x), py(e.y) - r);
       ctx.lineTo(px(e.x) + r, py(e.y));
@@ -237,6 +253,16 @@ if (mount) {
       ctx.lineTo(px(e.x) - r, py(e.y));
       ctx.closePath();
       ctx.fill();
+      // How much is left of it, as an arc around it. A big shape that never
+      // visibly changes reads as invulnerable, and a player who thinks a
+      // thing cannot be hurt stops trying to hurt it.
+      if (e.boss) {
+        ctx.strokeStyle = "#e05c5c";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(px(e.x), py(e.y), r + 6, -Math.PI / 2, -Math.PI / 2 + (e.health / e.maxHealth) * Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     for (const s of run.shots) {
@@ -369,6 +395,7 @@ if (mount) {
     mirror.dataset.kills = String(run.kills);
     mirror.dataset.xp = run.xp.toFixed(1);
     mirror.dataset.enemies = String(run.enemies.length);
+    mirror.dataset.boss = run.bossDeadline === null ? "" : String(run.bossIndex);
     mirror.dataset.orbs = String(run.orbs.length);
     draw(now);
     requestAnimationFrame(frame);
