@@ -134,16 +134,24 @@ const BOLT_DAMAGE = 17;
 const BOLT_INTERVAL = 0.85;
 
 // Something with real health, twice a run, on a clock. This is where the
-// experience you did or did not pick up gets asked about: a player who has
-// been gathering can put a boss down inside the window, and a player who has
-// been dodging in a corner cannot, and loses there rather than slowly.
+// experience you did or did not pick up gets asked about.
+//
+// Its health is set by how far behind you are, not by a fixed number. A flat
+// number made the window a pure damage race, and measured that way the
+// movement card was worth exactly nothing — same survival, same kills, to the
+// decimal — because moving faster kills nothing. Scaling the boss by level
+// makes every card that gets you levels count, which is all of them, and it
+// says the thing the design is actually about: the boss is as hard as you are
+// unprepared.
 export const BOSS_TIMES_MS = [40_000, 80_000] as const;
 export const BOSS_WINDOW_MS = 26_000;
 // Sized so the opening weapon on its own cannot do it. Base damage is about
 // 20 a second and the window is 22, so anything under 440 is a boss a player
 // who declined every card can still kill — and at 200 they did, eleven runs
 // out of fifteen. The gate has to actually be a gate.
-const BOSS_HEALTH = [520, 780] as const;
+const BOSS_HEALTH = [340, 560] as const;
+/** The level a boss expects you to have reached by the time it arrives. */
+export const BOSS_EXPECTS = [6, 12] as const;
 const BOSS_SPEED = [0.10, 0.13] as const;
 const HAZARD_SPEED = 0.34;
 const HAZARD_LIFE = 4.5;
@@ -209,7 +217,16 @@ export function createRun(rng: () => number = Math.random): Run {
 export const moveSpeed = (b: Build) => PLAYER_SPEED * (1 + 0.30 * b.speed);
 export const damageMul = (b: Build) => 1 + 0.45 * b.damage;
 export const rateMul = (b: Build) => 1 + 0.32 * b.rate;
-export const magnetRadius = (b: Build) => 0.075 * (1 + 0.9 * b.magnet);
+/**
+ * You have to walk onto it. Nothing is collected at a distance until the Draw
+ * card says so — the reach was free before, and free reach is the difference
+ * between "go and get it" and "wander near it", which is the whole verb this
+ * game has.
+ */
+export const TOUCH_RADIUS = 0.026;
+
+/** How far Draw pulls from. Zero until it is taken. */
+export const drawRadius = (b: Build) => (b.magnet === 0 ? 0 : 0.075 + 0.045 * (b.magnet - 1));
 
 /**
  * What one orb is worth. Radius alone made this upgrade a trap: measured at
@@ -228,7 +245,7 @@ export const xpPerOrb = (b: Build) => 1 + 0.4 * b.magnet;
  * happened. Superlinear means the early ones are still quick and the late
  * ones have to be worked for, which is the shape this kind of game wants.
  */
-export const xpForLevel = (level: number) => 6 + Math.round(2.2 * level ** 1.45);
+export const xpForLevel = (level: number) => 4 + Math.round(1.6 * level ** 1.35);
 
 /** Old note kept for the record — how much XP a level costs. Rises, so the last upgrade is earned — and
  *  steeply enough that a run is not one long card screen. At 3 + 2L a
@@ -275,6 +292,24 @@ function dist(a: Vec2, b: Vec2): number {
 /** What kinds have shown up by now. Walkers teach the game; the other two
  *  arrive once it has been taught, so nothing new is ever the first thing a
  *  player meets. */
+/** How much upgrading has actually been done — every level of everything. */
+export const upgradesTaken = (b: Build) => UPGRADES.reduce((n, u) => n + b[u.id], 0);
+
+/**
+ * What the boss brings, given how much the player has actually banked. Behind
+ * what it expects and it is proportionally tougher; ahead and it is softer,
+ * floored and capped so neither end is absurd.
+ *
+ * It counts upgrades taken, not level reached. Level was the first version and
+ * it was wrong in a way only the headless runs could show: a run that declines
+ * every card still levels, so the player who had banked nothing was being
+ * handed a *weaker* boss for having been offered cards and refused them.
+ */
+export function bossHealth(index: number, taken: number): number {
+  const behind = BOSS_EXPECTS[index] / Math.max(1, taken);
+  return BOSS_HEALTH[index] * Math.min(2.6, Math.max(0.45, behind));
+}
+
 export function kindsAt(elapsedMs: number): EnemyKind[] {
   const kinds: EnemyKind[] = ["walker"];
   if (elapsedMs > 22_000) kinds.push("shooter");
@@ -286,7 +321,7 @@ function spawnPressure(elapsedMs: number): { interval: number; health: number; s
   const t = elapsedMs / RUN_MS;
   return {
     interval: 1.9 - 1.1 * t,
-    health: 3 + 20 * t,
+    health: 3 + 15 * t,
     // Fast enough by the end to catch a player who has not levelled their
     // legs: 0.29 against a base 0.26. When they topped out under the player's
     // own speed, the movement card measured at nothing, because there was
@@ -366,10 +401,11 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
       : edge === 1 ? { x: along, y: 1.05 }
       : edge === 2 ? { x: -0.05, y: along }
       : { x: 1.05, y: along };
+    const health = bossHealth(i, upgradesTaken(run.build));
     run.enemies.push({
       ...at,
-      health: BOSS_HEALTH[i],
-      maxHealth: BOSS_HEALTH[i],
+      health,
+      maxHealth: health,
       speed: BOSS_SPEED[i],
       hitCd: 0,
       kind: "walker",
@@ -544,27 +580,18 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
   // XP has to be walked into. That is what keeps the only verb honest: the
   // orbs land where the fighting was, so getting stronger means going back
   // into it.
-  // Experience comes to you, from further out than you can reach. Walking
-  // past it was the whole problem: a live run killed thirty-one things in
-  // forty-five seconds and reached level three, because collecting required
-  // steering onto a three-pixel dot rather than going roughly where the
-  // fighting was. Inside the reach an orb snaps in; out to two and a half
-  // times it, it drifts, faster the closer it is.
-  const pull = magnetRadius(b);
-  const notice = pull * 2.6;
+  // Experience is walked onto, not hoovered up. Draw is what buys the pull,
+  // and until it is taken every piece has to be stood on.
+  const pull = drawRadius(b);
   run.orbs = run.orbs.filter((o) => {
     o.life -= dt;
     const d = dist(o, run.player);
-    if (d < pull) {
-      const k = Math.min(1, (dt * 2.2) / Math.max(d, 0.001));
-      o.x += (run.player.x - o.x) * k;
-      o.y += (run.player.y - o.y) * k;
-    } else if (d < notice) {
-      const speed = 0.42 * (1 - (d - pull) / (notice - pull));
-      o.x += ((run.player.x - o.x) / d) * speed * dt;
-      o.y += ((run.player.y - o.y) / d) * speed * dt;
+    if (pull > 0 && d < pull) {
+      const speed = 0.55 * (1 - d / pull) + 0.15;
+      o.x += ((run.player.x - o.x) / (d || 1)) * speed * dt;
+      o.y += ((run.player.y - o.y) / (d || 1)) * speed * dt;
     }
-    if (dist(o, run.player) < 0.022) {
+    if (dist(o, run.player) < TOUCH_RADIUS) {
       run.xp += o.value * xpPerOrb(b);
       return false;
     }

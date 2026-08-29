@@ -9,7 +9,8 @@ import {
   UPGRADES,
   applyUpgrade,
   createRun,
-  magnetRadius,
+  TOUCH_RADIUS,
+  drawRadius,
   step,
   xpForLevel,
   type Run,
@@ -149,7 +150,7 @@ if (mount) {
     speed: { name: "Fleet", line: "Move faster." },
     damage: { name: "Edge", line: "Everything you have hits harder." },
     rate: { name: "Tempo", line: "Everything you have fires more often." },
-    magnet: { name: "Draw", line: "Experience comes from further, and is worth more." },
+    magnet: { name: "Draw", line: "Experience is pulled in, and is worth more." },
     orbit: { name: "Orbit", line: "A shard circles you, and cuts what it touches." },
     bolt: { name: "Bolt", line: "One more bolt, at whatever is nearest." },
     nova: { name: "Pulse", line: "A shockwave, outward, on its own clock." },
@@ -300,9 +301,11 @@ if (mount) {
       disc(px(o.x), py(o.y), ps(big ? 0.006 : 0.0035), "#fff3dc");
     }
 
-    // The pickup reach, drawn faintly. The one piece of state a player has to
-    // feel to play well, and the only way to show it without a sentence.
-    ring(px(run.player.x), py(run.player.y), ps(magnetRadius(run.build)), "rgb(232 178 92 / 14%)", 1);
+    // Draw's reach, once there is any. Nothing is drawn when the upgrade has
+    // not been taken, because there is nothing to show: experience is picked
+    // up by standing on it.
+    const reach = drawRadius(run.build);
+    if (reach > 0) ring(px(run.player.x), py(run.player.y), ps(reach), "rgb(232 178 92 / 16%)", 1);
 
     for (const e of run.enemies) {
       const r = ps(e.boss ? 0.019 + BOSS_RADIUS : 0.019);
@@ -439,9 +442,8 @@ if (mount) {
         run.player.x = Math.min(1, Math.max(0, run.player.x + (input.x / mag) * s));
         run.player.y = Math.min(1, Math.max(0, run.player.y + (input.y / mag) * s));
       }
-      const reach = magnetRadius(run.build);
       const took = run.orbs.findIndex(
-        (o) => Math.hypot(o.x - run.player.x, o.y - run.player.y) < reach,
+        (o) => Math.hypot(o.x - run.player.x, o.y - run.player.y) < TOUCH_RADIUS,
       );
       if (took >= 0) {
         run.orbs.splice(took, 1);
