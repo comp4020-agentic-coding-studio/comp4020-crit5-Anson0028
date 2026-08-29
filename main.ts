@@ -276,9 +276,30 @@ if (mount) {
       const won = run.outcome === "won";
       ring(px(0.5), py(0.5), ps(0.10), won ? "#e8b25c" : "#e05c5c", 4);
       if (won) disc(px(0.5), py(0.5), ps(0.045), "#e8b25c");
-      // A replay affordance, wordless: a ring that closes, then the run
-      // restarts on any input.
-      ring(px(0.5), py(0.5), ps(0.14 + Math.sin(now / 700) * 0.01), "rgb(233 230 223 / 25%)", 2);
+      // The replay affordance, and the only symbol on the page: a circular
+      // arrow. Words here would be instructions, and a bare ring said nothing
+      // at all — a stranger has to be able to see that this can be done
+      // again. Any key, or a tap anywhere, starts the next run.
+      const r = ps(0.115);
+      ctx.strokeStyle = "rgb(233 230 223 / 55%)";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(px(0.5), py(0.5), r, -Math.PI * 0.72, Math.PI * 1.16);
+      ctx.stroke();
+      const tip = -Math.PI * 0.72;
+      const tx = px(0.5) + Math.cos(tip) * r;
+      const ty = py(0.5) + Math.sin(tip) * r;
+      ctx.fillStyle = "rgb(233 230 223 / 55%)";
+      ctx.beginPath();
+      ctx.moveTo(tx + Math.cos(tip) * 9, ty + Math.sin(tip) * 9);
+      ctx.lineTo(tx - Math.sin(tip) * 9, ty + Math.cos(tip) * 9);
+      ctx.lineTo(tx + Math.sin(tip) * 9, ty - Math.cos(tip) * 9);
+      ctx.closePath();
+      ctx.fill();
+      // How far you got, left along the top: the timer bar is the score, and
+      // it is already on screen.
+      ctx.fillStyle = won ? "#e8b25c" : "#e05c5c";
+      ctx.fillRect(ox, oy, side * Math.min(1, run.elapsedMs / RUN_MS), 3);
     }
   }
 
