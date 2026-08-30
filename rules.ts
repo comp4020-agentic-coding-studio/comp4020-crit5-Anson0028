@@ -132,6 +132,12 @@ const SHOT_SPEED = 0.75;
 // them.
 const BOLT_DAMAGE = 17;
 const BOLT_INTERVAL = 0.85;
+// Unranged, it targeted the nearest enemy anywhere in the arena, so standing
+// still cleared the screen from corner to corner with nothing ever getting
+// close enough to matter — a full-arena auto-turret is not a weapon a run
+// can be hard around. Capped at this, an enemy has to close roughly a third
+// of the arena before the bolt notices it.
+const BOLT_RANGE = 0.32;
 
 // Something with real health, twice a run, on a clock. This is where the
 // experience you did or did not pick up gets asked about.
@@ -522,8 +528,8 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
   if (b.bolt > 0) {
     run.cooldowns.bolt -= dt * rateMul(b);
     if (run.cooldowns.bolt <= 0) {
-      run.cooldowns.bolt += BOLT_INTERVAL;
-      const alive = run.enemies.filter((e) => e.health > 0);
+      const alive = run.enemies.filter((e) => e.health > 0 && dist(e, run.player) < BOLT_RANGE);
+      if (alive.length > 0) run.cooldowns.bolt += BOLT_INTERVAL;
       for (let i = 0; i < b.bolt && alive.length > 0; i++) {
         const target = alive.reduce((best, e) => (dist(e, run.player) < dist(best, run.player) ? e : best), alive[0]);
         const d = dist(target, run.player) || 1;
