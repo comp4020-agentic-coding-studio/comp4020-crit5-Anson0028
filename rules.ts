@@ -23,6 +23,8 @@ export type Enemy = Vec2 & {
   boss?: boolean;
   /** The second boss does both. */
   charges?: boolean;
+  /** Which barrage pattern a boss fires next, cycling. */
+  burstIndex?: number;
 };
 
 /** Something the enemies fired. Costs a heart, same as walking into one. */
@@ -169,6 +171,13 @@ const CHARGE_TIME = 0.42;
 const CHARGE_INTERVAL = 3.4;
 const BOSS_BURST_INTERVAL = 3.2;
 const BOSS_BURST_COUNT = 12;
+// A ring only ever asks one question — which gap is nearest — and once
+// that is answered it is answered every time it recurs. The fan asks where
+// the player is standing right now, so the same walk-to-the-gap answer
+// doesn't carry over. Alternating the two keeps the boss window asking a
+// live question instead of the same one on a shorter clock.
+const BOSS_FAN_COUNT = 5;
+const BOSS_FAN_SPREAD = Math.PI / 1.8;
 export const BOSS_RADIUS = 0.055;
 const BOSS_ORBS = 10;
 
@@ -356,9 +365,14 @@ function spawnEnemy(run: Run, rng: () => number, p: ReturnType<typeof spawnPress
     : { x: 1.03, y: along };
   const kinds = kindsAt(run.elapsedMs);
   const kind = kinds[Math.floor(rng() * kinds.length)];
+  // A charger that dies to the first bolt it walks into was never a threat
+  // to dodge, it was a threat to ignore: the dash telegraphs and then does
+  // nothing because the thing doing it is already dead. Tankier than a
+  // walker, not just faster, so surviving its charge is what kills it.
+  const healthMul = kind === "charger" ? 1.15 : kind === "shooter" ? 0.75 : 1;
   run.enemies.push({
     ...at,
-    health: p.health * (kind === "walker" ? 1 : 0.75),
+    health: p.health * healthMul,
     maxHealth: p.health,
     speed: p.speed * (kind === "charger" ? 0.5 : kind === "shooter" ? 0.8 : 1),
     hitCd: 0,
@@ -429,6 +443,7 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
       // charges as well, because a second boss that is only a bigger first
       // boss is a bar chart, not an encounter.
       charges: i > 0,
+      burstIndex: 0,
     });
     run.bossDeadline = run.elapsedMs + BOSS_WINDOW_MS;
   }
@@ -470,12 +485,29 @@ export function step(run: Run, dt: number, input: Input, rng: () => number): voi
       e.y += toward.y * e.speed * dt;
       if (e.cd <= 0) {
         e.cd = BOSS_BURST_INTERVAL;
-        if (e.charges && rng() < 0.5) e.dash = { ...toward, t: CHARGE_TIME * 1.4 };
-        else {
-          const off = rng() * Math.PI * 2;
-          for (let i = 0; i < BOSS_BURST_COUNT; i++) {
-            const a = off + (i / BOSS_BURST_COUNT) * Math.PI * 2;
-            run.hazards.push({ x: e.x, y: e.y, dx: Math.cos(a), dy: Math.sin(a), life: HAZARD_LIFE });
+        if (e.charges && rng() < 0.5) {
+          e.dash = { ...toward, t: CHARGE_TIME * 1.4 };
+        } else {
+          // Ring and fan alternate. A ring is beaten by walking to whichever
+          // gap the random offset happened to leave, and that answer keeps
+          // working every time it recurs unchanged. The fan is aimed at
+          // wherever the player is standing, so the same answer doesn't
+          // carry over — it has to be read as its own attack, not dodged on
+          // reflex.
+          const fan = (e.burstIndex ?? 0) % 2 === 1;
+          e.burstIndex = (e.burstIndex ?? 0) + 1;
+          if (fan) {
+            const base = Math.atan2(toward.y, toward.x);
+            for (let i = 0; i < BOSS_FAN_COUNT; i++) {
+              const a = base - BOSS_FAN_SPREAD / 2 + (i / (BOSS_FAN_COUNT - 1)) * BOSS_FAN_SPREAD;
+              run.hazards.push({ x: e.x, y: e.y, dx: Math.cos(a), dy: Math.sin(a), life: HAZARD_LIFE });
+            }
+          } else {
+            const off = rng() * Math.PI * 2;
+            for (let i = 0; i < BOSS_BURST_COUNT; i++) {
+              const a = off + (i / BOSS_BURST_COUNT) * Math.PI * 2;
+              run.hazards.push({ x: e.x, y: e.y, dx: Math.cos(a), dy: Math.sin(a), life: HAZARD_LIFE });
+            }
           }
         }
       }
