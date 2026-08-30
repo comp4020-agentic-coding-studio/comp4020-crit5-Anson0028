@@ -58,6 +58,10 @@ if (mount) {
   let started = false;
   let moves = 0;
   let pendingInputAt: number | null = null;
+  // When the run stopped playing, so the win/lose effect below has a fixed
+  // zero rather than recomputing "how long ago" from a moving elapsedMs.
+  let outcomeAt: number | null = null;
+  const FX_MS = 700;
 
   // The arena is square inside whatever box the layout gives it, so a
   // fraction of the arena is the same distance in x as in y. Without this a
@@ -239,6 +243,7 @@ if (mount) {
   function restart(): void {
     run = createRun();
     started = false;
+    outcomeAt = null;
     verdict.hidden = true;
     canvas.focus();
   }
@@ -262,6 +267,17 @@ if (mount) {
   function draw(now: number): void {
     const { side, ox, oy } = box();
     ctx.clearRect(0, 0, w, h);
+    ctx.save();
+    // Screen shake, only for the first instant of a loss, and only when
+    // motion is welcome. It decays to nothing well before the panel finishes
+    // popping in, so it reads as an impact rather than an ongoing wobble.
+    if (run.outcome === "lost" && outcomeAt !== null && !reducedMotion.matches) {
+      const t = Math.min(1, (now - outcomeAt) / FX_MS);
+      if (t < 0.4) {
+        const mag = ps(0.014) * (1 - t / 0.4);
+        ctx.translate((Math.random() - 0.5) * mag, (Math.random() - 0.5) * mag);
+      }
+    }
     ctx.fillStyle = "#0d0d12";
     ctx.fillRect(ox, oy, side, side);
 
@@ -394,13 +410,44 @@ if (mount) {
 
     // The end state is a panel now, in words, so the canvas only dims behind
     // it. The wordless ring said "something happened" and left which of the
-    // two things to the player.
+    // two things to the player. A burst or a flash on top of the dim says
+    // which one before the panel's text has even faded in.
     if (run.outcome !== "playing") {
       ctx.fillStyle = "rgb(10 10 13 / 72%)";
       ctx.fillRect(ox, oy, side, side);
       ctx.fillStyle = run.outcome === "won" ? "#e8b25c" : "#e05c5c";
       ctx.fillRect(ox, oy, side * Math.min(1, run.elapsedMs / RUN_MS), 6);
+
+      const t = outcomeAt === null ? 1 : Math.min(1, (now - outcomeAt) / FX_MS);
+      const cx = px(run.player.x);
+      const cy = py(run.player.y);
+      if (run.outcome === "won") {
+        if (reducedMotion.matches) {
+          // Still obvious without anything moving: one steady ring.
+          ring(cx, cy, ps(0.18), "rgb(232 178 92 / 55%)", 4);
+        } else {
+          for (const delay of [0, 0.15, 0.3]) {
+            const rt = (t - delay) / (1 - delay);
+            if (rt <= 0) continue;
+            const eased = 1 - Math.pow(1 - Math.min(1, rt), 3);
+            ring(cx, cy, ps(0.05 + eased * 0.55), `rgb(232 178 92 / ${(1 - eased) * 0.6})`, 3);
+          }
+          if (t < 0.3) {
+            ctx.fillStyle = `rgb(244 241 232 / ${0.35 * (1 - t / 0.3)})`;
+            ctx.fillRect(ox, oy, side, side);
+          }
+        }
+      } else {
+        if (reducedMotion.matches) {
+          ctx.fillStyle = "rgb(224 92 92 / 30%)";
+          ctx.fillRect(ox, oy, side, side);
+        } else if (t < 0.5) {
+          ctx.fillStyle = `rgb(224 92 92 / ${0.4 * (1 - t / 0.5)})`;
+          ctx.fillRect(ox, oy, side, side);
+        }
+      }
     }
+    ctx.restore();
   }
 
   // --- the loop ------------------------------------------------------------
