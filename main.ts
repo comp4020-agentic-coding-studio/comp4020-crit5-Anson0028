@@ -101,8 +101,15 @@ if (mount) {
     const k = e.key.toLowerCase();
     if (!["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) return;
     e.preventDefault();
-    if (!held.has(k)) noteInput(e.timeStamp);
+    const fresh = !held.has(k);
+    if (fresh) noteInput(e.timeStamp);
     held.add(k);
+    // A key already held at the moment of death is not a decision to play
+    // again — it is just the key that was down when the run ended, since
+    // most deaths happen mid-move. Only a new press restarts, so the verdict
+    // and its flash get a chance to be seen instead of vanishing the same
+    // frame they appear.
+    if (fresh && run.outcome !== "playing") restart();
   });
   canvas.addEventListener("keyup", (e) => held.delete(e.key.toLowerCase()));
   canvas.addEventListener("blur", () => held.clear());
@@ -114,6 +121,10 @@ if (mount) {
   canvas.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     canvas.focus();
+    if (run.outcome !== "playing") {
+      restart();
+      return;
+    }
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {
@@ -477,8 +488,8 @@ if (mount) {
 
     const input = direction();
     if (run.outcome !== "playing") {
+      if (outcomeAt === null) outcomeAt = now;
       if (verdict.hidden) showVerdict();
-      if (input.x !== 0 || input.y !== 0) restart();
     } else if (!started) {
       // Frozen until the first orb is taken: no clock, no spawns. The field
       // already has experience lying on it, so the opening screen is a room
