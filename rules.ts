@@ -211,7 +211,7 @@ export function createRun(rng: () => number = Math.random): Run {
     // The first weapon arrives almost immediately, because a player who has
     // pressed a key and seen nothing happen has already learned the wrong
     // thing about this game.
-    cooldowns: { bolt: 0, nova: 0, spawn: 1.2, field: FIELD_ORB_INTERVAL },
+    cooldowns: { bolt: 0, nova: 0, spawn: 0.7, field: FIELD_ORB_INTERVAL },
   };
 }
 
@@ -325,15 +325,23 @@ export function kindsAt(elapsedMs: number): EnemyKind[] {
 
 function spawnPressure(elapsedMs: number): { interval: number; health: number; speed: number; count: number } {
   const t = elapsedMs / RUN_MS;
+  // The opening used to trickle in one enemy every ~1.9s and never put more
+  // than one on screen at once in the first 20s (measured: avgMaxAlive0to20
+  // = 1.00 across 8 seeds) — bumping the whole-run curve to fix that also
+  // collapsed the win rate, because the same curve governs the final third
+  // of the run. So the boost is front-loaded and fades to nothing by t=0.15
+  // (18s): the mid/late curve, and the win/boss-pass rates it was tuned
+  // against, are unchanged past that point.
+  const earlyBoost = Math.max(0, 0.15 - t) / 0.15;
   return {
-    interval: 1.9 - 1.1 * t,
+    interval: 1.9 - 1.1 * t - 0.6 * earlyBoost,
     health: 3 + 15 * t,
     // Fast enough by the end to catch a player who has not levelled their
     // legs: 0.29 against a base 0.26. When they topped out under the player's
     // own speed, the movement card measured at nothing, because there was
     // never anything to outrun.
     speed: 0.12 + 0.17 * t,
-    count: 1 + Math.floor(t * 2.5),
+    count: 1 + Math.floor(t * 2.5) + (earlyBoost > 0 ? 1 : 0),
   };
 }
 
