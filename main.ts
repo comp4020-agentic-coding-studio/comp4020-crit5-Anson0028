@@ -29,6 +29,7 @@ if (mount) {
   const hudLevel = mount.querySelector<HTMLElement>('[data-testid="level"]')!;
   const hudClock = mount.querySelector<HTMLElement>('[data-testid="clock"]')!;
   const hudTally = mount.querySelector<HTMLElement>('[data-testid="tally"]')!;
+  const muteBtn = mount.querySelector<HTMLButtonElement>('[data-testid="mute"]')!;
 
   const ctx = canvas.getContext("2d")!;
   let w = 0;
@@ -62,6 +63,110 @@ if (mount) {
   // zero rather than recomputing "how long ago" from a moving elapsedMs.
   let outcomeAt: number | null = null;
   const FX_MS = 700;
+  let prevHearts = run.hearts;
+  let prevLevel = run.level;
+
+  // --- sound -----------------------------------------------------------
+  // Off by default: a page that makes noise the instant it loads is the
+  // instruction the brief bans by another name, announcing itself before a
+  // visitor decided they wanted it to. The toggle remembers a visitor's
+  // choice across runs, but never across visits by defaulting to silent —
+  // "1" is the only value that turns it on.
+  const MUTE_KEY = "cq-sound-enabled";
+  const BEST_KEY = "cq-best-level";
+  function readFlag(key: string): boolean {
+    try {
+      return localStorage.getItem(key) === "1";
+    } catch {
+      return false;
+    }
+  }
+  function writeFlag(key: string, v: boolean): void {
+    try {
+      localStorage.setItem(key, v ? "1" : "0");
+    } catch {
+      // private browsing or a disabled store — the toggle still works this visit
+    }
+  }
+  function readBest(): number {
+    try {
+      return Number(localStorage.getItem(BEST_KEY)) || 0;
+    } catch {
+      return 0;
+    }
+  }
+  function writeBest(v: number): void {
+    try {
+      localStorage.setItem(BEST_KEY, String(v));
+    } catch {
+      // see readFlag
+    }
+  }
+
+  let soundEnabled = readFlag(MUTE_KEY);
+  let audioCtx: AudioContext | null = null;
+  function ensureAudio(): AudioContext | null {
+    if (!soundEnabled) return null;
+    if (!audioCtx) {
+      const Ctx = window.AudioContext;
+      if (!Ctx) return null;
+      audioCtx = new Ctx();
+    }
+    if (audioCtx.state === "suspended") void audioCtx.resume();
+    return audioCtx;
+  }
+  function tone(freq: number, ms: number, type: OscillatorType, gain: number, delayMs = 0): void {
+    const ctx = ensureAudio();
+    if (!ctx) return;
+    const start = ctx.currentTime + delayMs / 1000;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, start);
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(gain, start + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, start + ms / 1000);
+    osc.connect(g);
+    g.connect(ctx.destination);
+    osc.start(start);
+    osc.stop(start + ms / 1000 + 0.02);
+  }
+  const sfxHit = () => tone(140, 90, "square", 0.12);
+  const sfxLevelUp = () => {
+    tone(660, 90, "triangle", 0.14);
+    tone(880, 120, "triangle", 0.12, 90);
+  };
+  const sfxWin = () => {
+    tone(523.25, 150, "sine", 0.15);
+    tone(659.25, 150, "sine", 0.15, 120);
+    tone(783.99, 260, "sine", 0.16, 240);
+  };
+  const sfxLose = () => {
+    tone(196, 260, "sawtooth", 0.14);
+    tone(146.83, 340, "sawtooth", 0.13, 140);
+  };
+
+  const MUTE_GLYPH = {
+    on: '<path d="M10 18 H16 L26 10 V38 L16 30 H10 Z" fill="currentColor"/><path d="M32 18 a10 10 0 0 1 0 12" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M37 13 a17 17 0 0 1 0 22" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.6"/>',
+    off: '<path d="M10 18 H16 L26 10 V38 L16 30 H10 Z" fill="currentColor"/><path d="M31 18 L41 30 M41 18 L31 30" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>',
+  };
+  function renderMuteButton(): void {
+    muteBtn.setAttribute("aria-pressed", String(soundEnabled));
+    muteBtn.setAttribute("aria-label", soundEnabled ? "Mute sound" : "Enable sound");
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 48 48");
+    svg.setAttribute("aria-hidden", "true");
+    svg.innerHTML = soundEnabled ? MUTE_GLYPH.on : MUTE_GLYPH.off;
+    muteBtn.replaceChildren(svg);
+  }
+  renderMuteButton();
+  muteBtn.addEventListener("click", () => {
+    soundEnabled = !soundEnabled;
+    writeFlag(MUTE_KEY, soundEnabled);
+    renderMuteButton();
+    if (soundEnabled) ensureAudio();
+    canvas.focus();
+  });
 
   // The arena is square inside whatever box the layout gives it, so a
   // fraction of the arena is the same distance in x as in y. Without this a
@@ -255,6 +360,8 @@ if (mount) {
     run = createRun();
     started = false;
     outcomeAt = null;
+    prevHearts = run.hearts;
+    prevLevel = run.level;
     verdict.hidden = true;
     canvas.focus();
   }
@@ -488,7 +595,11 @@ if (mount) {
 
     const input = direction();
     if (run.outcome !== "playing") {
-      if (outcomeAt === null) outcomeAt = now;
+      if (outcomeAt === null) {
+        outcomeAt = now;
+        if (run.outcome === "won") sfxWin();
+        else sfxLose();
+      }
       if (verdict.hidden) showVerdict();
     } else if (!started) {
       // Frozen until the first orb is taken: no clock, no spawns. The field
@@ -511,6 +622,10 @@ if (mount) {
     } else {
       if (run.pending && cards.hidden) showCards(run.pending);
       step(run, dt, input, rng);
+      if (run.hearts < prevHearts) sfxHit();
+      if (run.level > prevLevel) sfxLevelUp();
+      prevHearts = run.hearts;
+      prevLevel = run.level;
     }
 
     for (let i = 0; i < hudHearts.children.length; i++) {
