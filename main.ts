@@ -334,11 +334,14 @@ if (mount) {
     verdict.replaceChildren();
     const title = document.createElement("h2");
     title.textContent = won ? "Survived" : "Overrun";
+    const best = Math.max(readBest(), run.level);
+    writeBest(best);
     const dl = document.createElement("dl");
     for (const [k, v] of [
       ["Lasted", `${mmss(run.elapsedMs)} of ${mmss(RUN_MS)}`],
       ["Level", String(run.level)],
       ["Destroyed", String(run.kills)],
+      ["Best level", String(best)],
     ] as const) {
       const dt = document.createElement("dt");
       dt.textContent = k;
